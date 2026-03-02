@@ -83,6 +83,9 @@ impl TerminalBackend {
 
 // ── Internal canvas ───────────────────────────────────────────────────────────
 
+/// RGB colour triple used throughout the terminal canvas.
+type Rgb = (u8, u8, u8);
+
 struct Canvas {
     cols: usize,
     rows: usize,
@@ -91,24 +94,24 @@ struct Canvas {
 
     /// `[row][col]` braille bitmask (U+2800 encoding).
     braille: Vec<Vec<u8>>,
-    braille_color: Vec<Vec<Option<(u8, u8, u8)>>>,
+    braille_color: Vec<Vec<Option<Rgb>>>,
 
     /// `[row][col]` box-drawing bitmask (TOP/RIGHT/BOTTOM/LEFT bits).
     line_char_bits: Vec<Vec<u8>>,
-    line_char_color: Vec<Vec<Option<(u8, u8, u8)>>>,
+    line_char_color: Vec<Vec<Option<Rgb>>>,
 
     /// `[row][col]` character overlay (filled blocks and text). Drawn on top.
-    char_grid: Vec<Vec<Option<(char, (u8, u8, u8))>>>,
+    char_grid: Vec<Vec<Option<(char, Rgb)>>>,
 
     /// Accumulated `translate(tx,ty)` offsets — innermost frame last.
     transform_stack: Vec<(f64, f64)>,
 
     /// Colour used for Text primitives, derived from scene.text_color.
-    text_color: (u8, u8, u8),
+    text_color: Rgb,
 }
 
 impl Canvas {
-    fn new(cols: usize, rows: usize, scene_width: f64, scene_height: f64, text_color: (u8, u8, u8)) -> Self {
+    fn new(cols: usize, rows: usize, scene_width: f64, scene_height: f64, text_color: Rgb) -> Self {
         let cols = cols.max(1);
         let rows = rows.max(1);
         let scene_width = scene_width.max(1.0);
@@ -155,7 +158,7 @@ impl Canvas {
 
     // ── Braille drawing ──────────────────────────────────────────────────────
 
-    fn set_dot(&mut self, bx: isize, by: isize, color: (u8, u8, u8)) {
+    fn set_dot(&mut self, bx: isize, by: isize, color: Rgb) {
         if bx < 0 || by < 0 {
             return;
         }
@@ -181,7 +184,7 @@ impl Canvas {
         self.braille_color[tr][tc] = Some(color);
     }
 
-    fn set_char(&mut self, cx: isize, cy: isize, ch: char, color: (u8, u8, u8)) {
+    fn set_char(&mut self, cx: isize, cy: isize, ch: char, color: Rgb) {
         if cx < 0 || cy < 0 {
             return;
         }
@@ -196,7 +199,7 @@ impl Canvas {
     // ── Box-drawing line drawing ─────────────────────────────────────────────
 
     /// Accumulate box-drawing bits into a character cell.
-    fn set_line_bits(&mut self, cx: isize, cy: isize, bits: u8, color: (u8, u8, u8)) {
+    fn set_line_bits(&mut self, cx: isize, cy: isize, bits: u8, color: Rgb) {
         if cx < 0 || cy < 0 {
             return;
         }
@@ -210,7 +213,7 @@ impl Canvas {
     }
 
     /// Draw a horizontal box-drawing line at char_row `cy` from `cx0` to `cx1`.
-    fn draw_hline(&mut self, cx0: isize, cy: isize, cx1: isize, color: (u8, u8, u8)) {
+    fn draw_hline(&mut self, cx0: isize, cy: isize, cx1: isize, color: Rgb) {
         let (lo, hi) = if cx0 <= cx1 { (cx0, cx1) } else { (cx1, cx0) };
         for cx in lo..=hi {
             let bits = if lo == hi {
@@ -227,7 +230,7 @@ impl Canvas {
     }
 
     /// Draw a vertical box-drawing line at char_col `cx` from `cy0` to `cy1`.
-    fn draw_vline(&mut self, cx: isize, cy0: isize, cy1: isize, color: (u8, u8, u8)) {
+    fn draw_vline(&mut self, cx: isize, cy0: isize, cy1: isize, color: Rgb) {
         let (lo, hi) = if cy0 <= cy1 { (cy0, cy1) } else { (cy1, cy0) };
         for cy in lo..=hi {
             let bits = if lo == hi {
@@ -245,7 +248,7 @@ impl Canvas {
 
     // ── Bresenham braille line ───────────────────────────────────────────────
 
-    fn bresenham(&mut self, bx0: isize, by0: isize, bx1: isize, by1: isize, color: (u8, u8, u8)) {
+    fn bresenham(&mut self, bx0: isize, by0: isize, bx1: isize, by1: isize, color: Rgb) {
         let dx = (bx1 - bx0).abs();
         let dy = (by1 - by0).abs();
         let sx: isize = if bx0 < bx1 { 1 } else { -1 };
@@ -276,7 +279,7 @@ impl Canvas {
     /// `pts` is a list of scene-space (x, y) coordinates forming the polygon
     /// boundary.  Uses an even-odd fill rule: for each braille row, compute
     /// x-intersections with every edge, sort them, and fill between each pair.
-    fn fill_braille_polygon(&mut self, pts: &[(f64, f64)], rgb: (u8, u8, u8)) {
+    fn fill_braille_polygon(&mut self, pts: &[(f64, f64)], rgb: Rgb) {
         if pts.len() < 3 {
             return;
         }
@@ -747,7 +750,7 @@ impl Canvas {
     fn to_ansi_string(&self) -> String {
         let mut out = String::new();
         for row in 0..self.rows {
-            let mut prev_color: Option<(u8, u8, u8)> = None;
+            let mut prev_color: Option<Rgb> = None;
             for col in 0..self.cols {
                 // Layer 1: char_grid (rects + text)
                 if let Some((ch, rgb)) = self.char_grid[row][col] {
@@ -784,7 +787,7 @@ impl Canvas {
     }
 }
 
-fn emit_color(out: &mut String, prev: &mut Option<(u8, u8, u8)>, rgb: (u8, u8, u8)) {
+fn emit_color(out: &mut String, prev: &mut Option<Rgb>, rgb: Rgb) {
     if *prev != Some(rgb) {
         out.push_str(&format!("\x1b[38;2;{};{};{}m", rgb.0, rgb.1, rgb.2));
         *prev = Some(rgb);
@@ -1054,7 +1057,7 @@ fn parse_translate(t: &str) -> (f64, f64) {
 
 // ── CSS colour parsing ────────────────────────────────────────────────────────
 
-fn css_to_rgb(s: &str) -> (u8, u8, u8) {
+fn css_to_rgb(s: &str) -> Rgb {
     let s = s.trim();
     if s.is_empty() || s.eq_ignore_ascii_case("none") || s.eq_ignore_ascii_case("transparent") {
         return (128, 128, 128);
@@ -1093,7 +1096,7 @@ fn css_to_rgb(s: &str) -> (u8, u8, u8) {
     named_color(&sl)
 }
 
-fn named_color(s: &str) -> (u8, u8, u8) {
+fn named_color(s: &str) -> Rgb {
     match s {
         "black"                             => (0, 0, 0),
         "white"                             => (255, 255, 255),

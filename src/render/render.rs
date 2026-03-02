@@ -3649,6 +3649,7 @@ fn add_chord(chord: &ChordPlot, scene: &mut Scene, computed: &ComputedLayout) {
     {
         // Reset cursors
         let mut cursors = node_start.clone();
+        #[allow(clippy::needless_range_loop)]
         for i in 0..n {
             for j in 0..n {
                 sub_start[i][j] = cursors[i];
@@ -3660,6 +3661,7 @@ fn add_chord(chord: &ChordPlot, scene: &mut Scene, computed: &ComputedLayout) {
         }
     }
 
+    #[allow(clippy::needless_range_loop)]
     for i in 0..n {
         for j in 0..=i {
             let flow_ij = chord.matrix.get(i).and_then(|r| r.get(j)).copied().unwrap_or(0.0);

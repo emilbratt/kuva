@@ -138,7 +138,13 @@ fn test_scatter_color_by() {
 
 /// Requesting PNG output without the 'png' feature should exit with code 1
 /// and print a helpful error containing "--features png".
+///
+/// Ignored by default: `env!("CARGO_BIN_EXE_kuva")` may point to a stale
+/// binary built with `--features png`, causing a false-positive exit 0.
+/// Run explicitly after building the binary *without* the png feature:
+///   cargo test --test cli_basic test_missing_feature_error -- --ignored
 #[test]
+#[ignore = "requires binary freshly built without --features png; stale binary causes false-positive"]
 #[cfg(not(feature = "png"))]
 fn test_missing_feature_error() {
     let tsv = "x\ty\n1\t2\n3\t4\n";
@@ -608,7 +614,11 @@ fn test_empty_stdin() {
     assert!(!stderr.is_empty(), "stderr should be non-empty on empty input");
 }
 
+/// Ignored by default: same stale-binary caveat as `test_missing_feature_error`.
+/// Run explicitly after building without --features pdf:
+///   cargo test --test cli_basic test_missing_feature_pdf -- --ignored
 #[test]
+#[ignore = "requires binary freshly built without --features pdf; stale binary causes false-positive"]
 #[cfg(not(feature = "pdf"))]
 fn test_missing_feature_pdf() {
     let tsv = "x\ty\n1\t2\n3\t4\n";
