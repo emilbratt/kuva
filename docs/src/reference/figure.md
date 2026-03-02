@@ -186,10 +186,12 @@ Alternatively, set the **total** figure size and let cells auto-compute:
 
 ```rust,no_run
 Figure::new(2, 3)
-    .with_figure_size(1200.0, 800.0)  // total width × height; cells sized to fit
+    .with_figure_size(900.0, 560.0)  // total width × height; cells sized to fit
 ```
 
-`with_figure_size` takes precedence over `with_cell_size` when both are set.
+`with_figure_size` takes precedence over `with_cell_size` when both are set. The cell size budget is computed after reserving space for padding, spacing, title height, and any shared legend — so the output SVG dimensions exactly match what you specify.
+
+<img src="../assets/figure/figure_size.svg" alt="2×3 figure sized to a fixed 900×560 total" width="760">
 
 ---
 

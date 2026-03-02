@@ -24,6 +24,7 @@ fn main() {
     tall_panel();
     shared_axes();
     shared_legend();
+    figure_size();
     println!("Figure SVGs written to {OUT}/");
 }
 
@@ -184,6 +185,37 @@ fn shared_axes() {
         .render();
 
     std::fs::write(format!("{OUT}/shared_axes.svg"), SvgBackend.render_scene(&scene)).unwrap();
+}
+
+/// 2×3 grid sized to a fixed total width × height via with_figure_size.
+fn figure_size() {
+    let colors = ["steelblue", "crimson", "seagreen", "darkorange", "mediumpurple", "teal"];
+    let titles = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta"];
+
+    let all_plots: Vec<Vec<Plot>> = colors.iter().zip(titles.iter())
+        .map(|(color, title)| {
+            let data: Vec<(f64, f64)> = (0..10)
+                .map(|i| { let x = i as f64; (x, x * 0.8 + (x * 0.6 + title.len() as f64).sin() * 2.0) })
+                .collect();
+            vec![scatter(data, color, None)]
+        })
+        .collect();
+
+    let layouts: Vec<Layout> = all_plots.iter().zip(titles.iter())
+        .map(|(cell, title)| {
+            Layout::auto_from_plots(cell).with_title(*title)
+        })
+        .collect();
+
+    let scene = Figure::new(2, 3)
+        .with_plots(all_plots)
+        .with_layouts(layouts)
+        .with_labels()
+        .with_title("Fixed 900 × 560 figure — cells auto-sized")
+        .with_figure_size(900.0, 560.0)
+        .render();
+
+    std::fs::write(format!("{OUT}/figure_size.svg"), SvgBackend.render_scene(&scene)).unwrap();
 }
 
 /// 1×2 grid with a shared legend collected from all panels.

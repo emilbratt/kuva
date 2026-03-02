@@ -38,12 +38,12 @@ EXAMPLES=(
 )
 
 echo "Building examples..."
-cargo build --examples --quiet
+cargo build --features full --examples --quiet
 
 echo "Generating doc SVGs..."
 for ex in "${EXAMPLES[@]}"; do
     echo "  $ex"
-    cargo run --example "$ex" --quiet
+    cargo run --features full --example "$ex" --quiet
 done
 
 echo "Done."
