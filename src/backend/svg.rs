@@ -14,6 +14,12 @@ pub struct SvgBackend {
     pretty: bool,
 }
 
+impl Default for SvgBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SvgBackend {
     pub const fn new() -> Self {
         Self { pretty: false }
