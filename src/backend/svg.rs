@@ -187,28 +187,28 @@ impl SvgBackend {
                     svg.push_str(" />");
                     push_nl(&mut svg, p);
                 }
-                Primitive::Path { d, fill, stroke, stroke_width, opacity, stroke_dasharray } => {
+                Primitive::Path(pd) => {
                     write_indent(&mut svg, depth, p);
                     svg.push_str(r#"<path d=""#);
-                    svg.push_str(d);
+                    svg.push_str(&pd.d);
                     svg.push_str(r#"" stroke=""#);
-                    svg.push_str(stroke);
+                    svg.push_str(&pd.stroke);
                     svg.push_str(r#"" stroke-width=""#);
-                    write_coord(&mut svg, *stroke_width);
+                    write_coord(&mut svg, pd.stroke_width);
                     svg.push('"');
-                    if let Some(fill) = fill {
+                    if let Some(ref fill) = pd.fill {
                         svg.push_str(r#" fill=""#);
                         svg.push_str(fill);
                         svg.push('"');
                     } else {
                         svg.push_str(r#" fill="none""#);
                     }
-                    if let Some(opacity) = opacity {
+                    if let Some(opacity) = pd.opacity {
                         svg.push_str(r#" fill-opacity=""#);
-                        write_coord(&mut svg, *opacity);
+                        write_coord(&mut svg, opacity);
                         svg.push('"');
                     }
-                    if let Some(dash) = stroke_dasharray {
+                    if let Some(ref dash) = pd.stroke_dasharray {
                         svg.push_str(r#" stroke-dasharray=""#);
                         svg.push_str(dash);
                         svg.push('"');

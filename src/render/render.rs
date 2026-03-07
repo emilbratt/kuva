@@ -38,7 +38,20 @@ use crate::plot::synteny::{SyntenyPlot, Strand};
 use crate::plot::Legend;
 use crate::plot::legend::{ColorBarInfo, LegendEntry, LegendPosition, LegendShape};
 
-// TODO: make setters/builders for these primitives
+/// Data for a `<path>` SVG element.
+///
+/// Boxed inside `Primitive::Path` to keep the enum small (Path fields total
+/// ~120 bytes; without boxing, every Circle/Line/Rect is padded to that size).
+#[derive(Debug)]
+pub struct PathData {
+    pub d: String,
+    pub fill: Option<String>,
+    pub stroke: String,
+    pub stroke_width: f64,
+    pub opacity: Option<f64>,
+    pub stroke_dasharray: Option<String>,
+}
+
 #[derive(Debug)]
 pub enum Primitive {
     Circle {
@@ -65,14 +78,8 @@ pub enum Primitive {
         stroke_width: f64,
         stroke_dasharray: Option<String>,
     },
-    Path {
-        d: String,
-        fill: Option<String>,
-        stroke: String,
-        stroke_width: f64,
-        opacity: Option<f64>,
-        stroke_dasharray: Option<String>,
-    },
+    /// Boxed to avoid inflating the enum size by ~72 bytes per element.
+    Path(Box<PathData>),
     Rect {
         x: f64,
         y: f64,
@@ -221,14 +228,14 @@ fn draw_marker(scene: &mut Scene, marker: MarkerShape, cx: f64, cy: f64, size: f
             d.push_str(rb.format(round2(cx + size))); d.push(',');
             d.push_str(rb.format(round2(cy + h * 0.4)));
             d.push_str(" Z");
-            scene.add(Primitive::Path {
+            scene.add(Primitive::Path(Box::new(PathData {
                 d,
                 fill: Some(fill.into()),
                 stroke: fill.into(),
                 stroke_width: 0.5,
                 opacity: None,
                 stroke_dasharray: None,
-            });
+                        })));
         }
         MarkerShape::Diamond => {
             let s = size * 1.3;
@@ -247,14 +254,14 @@ fn draw_marker(scene: &mut Scene, marker: MarkerShape, cx: f64, cy: f64, size: f
             d.push_str(rb.format(round2(cx - s))); d.push(',');
             d.push_str(rb.format(round2(cy)));
             d.push_str(" Z");
-            scene.add(Primitive::Path {
+            scene.add(Primitive::Path(Box::new(PathData {
                 d,
                 fill: Some(fill.into()),
                 stroke: fill.into(),
                 stroke_width: 0.5,
                 opacity: None,
                 stroke_dasharray: None,
-            });
+                        })));
         }
         MarkerShape::Cross => {
             let s = size * 0.9;
@@ -306,14 +313,14 @@ fn add_band(band: &BandPlot, scene: &mut Scene, computed: &ComputedLayout) {
         path.push(' ');
     }
     path.push('Z');
-    scene.add(Primitive::Path {
+    scene.add(Primitive::Path(Box::new(PathData {
         d: path,
         fill: Some(band.color.clone()),
         stroke: "none".into(),
         stroke_width: 0.0,
         opacity: Some(band.opacity),
         stroke_dasharray: None,
-    });
+        })));
 }
 
 fn add_scatter(scatter: &ScatterPlot, scene: &mut Scene, computed: &ComputedLayout) {
@@ -495,24 +502,24 @@ fn add_line(line: &LinePlot, scene: &mut Scene, computed: &ComputedLayout) {
                 "{}L {last_x} {baseline_y} L {first_x} {baseline_y} Z",
                 stroke_d
             );
-            scene.add(Primitive::Path {
+            scene.add(Primitive::Path(Box::new(PathData {
                 d: fill_d,
                 fill: Some(line.color.clone()),
                 stroke: "none".into(),
                 stroke_width: 0.0,
                 opacity: Some(line.fill_opacity),
                 stroke_dasharray: None,
-            });
+                        })));
         }
 
-        scene.add(Primitive::Path {
+        scene.add(Primitive::Path(Box::new(PathData {
             d: stroke_d,
             fill: None,
             stroke: line.color.clone(),
             stroke_width: line.stroke_width,
             opacity: None,
             stroke_dasharray: line.line_style.dasharray(),
-        });
+                })));
     }
 
     // Draw error bars
@@ -568,14 +575,14 @@ fn add_series(series: &SeriesPlot, scene: &mut Scene, computed: &ComputedLayout)
     match series.style {
         SeriesStyle::Line => {
             if points.len() >= 2 {
-                scene.add(Primitive::Path {
+                scene.add(Primitive::Path(Box::new(PathData {
                         d: build_path(&points),
                         fill: None,
                         stroke: series.color.clone(),
                         stroke_width: series.stroke_width,
                         opacity: None,
                         stroke_dasharray: None,
-                });
+                                })));
             }
         }
         SeriesStyle::Point => {
@@ -590,14 +597,14 @@ fn add_series(series: &SeriesPlot, scene: &mut Scene, computed: &ComputedLayout)
         }
         SeriesStyle::Both => {
             if points.len() >= 2 {
-                scene.add(Primitive::Path {
+                scene.add(Primitive::Path(Box::new(PathData {
                         d: build_path(&points),
                         fill: None,
                         stroke: series.color.clone(),
                         stroke_width: series.stroke_width,
                         opacity: None,
                         stroke_dasharray: None,
-                });
+                                })));
             }
             for (x, y) in points {
                 scene.add(Primitive::Circle {
@@ -923,14 +930,14 @@ fn add_violin(violin: &ViolinPlot, scene: &mut Scene, computed: &ComputedLayout)
         }
         path_data.push('Z');
 
-        scene.add(Primitive::Path {
+        scene.add(Primitive::Path(Box::new(PathData {
             d: path_data,
             fill: Some(violin.color.clone()),
             stroke: theme.violin_border.clone(),
             stroke_width: 0.5,
             opacity: None,
             stroke_dasharray: None,
-        });
+                })));
     }
 
     // Overlay strip/swarm points after violin shapes
@@ -1018,14 +1025,14 @@ fn add_pie(pie: &PiePlot, scene: &mut Scene, computed: &ComputedLayout) {
             )
         };
 
-        scene.add(Primitive::Path {
+        scene.add(Primitive::Path(Box::new(PathData {
             d: path_data,
             fill: Some(slice.color.clone()),
             stroke: slice.color.clone(),
             stroke_width: 1.0,
             opacity: None,
             stroke_dasharray: None,
-        });
+                })));
 
         // Build label text
         let label_text = if pie.show_percent {
@@ -3162,14 +3169,14 @@ fn add_stacked_area(sa: &StackedAreaPlot, scene: &mut Scene, computed: &Computed
         }
         path.push('Z');
 
-        scene.add(Primitive::Path {
+        scene.add(Primitive::Path(Box::new(PathData {
             d: path,
             fill: Some(color.clone()),
             stroke: "none".into(),
             stroke_width: 0.0,
             opacity: Some(sa.fill_opacity),
             stroke_dasharray: None,
-        });
+                })));
 
         if sa.show_strokes {
             let mut stroke_path = String::with_capacity(n * 16);
@@ -3184,14 +3191,14 @@ fn add_stacked_area(sa: &StackedAreaPlot, scene: &mut Scene, computed: &Computed
                 stroke_path.push_str(rb.format(round2(sy)));
                 stroke_path.push(' ');
             }
-            scene.add(Primitive::Path {
+            scene.add(Primitive::Path(Box::new(PathData {
                 d: stroke_path,
                 fill: None,
                 stroke: color,
                 stroke_width: sa.stroke_width,
                 opacity: None,
                 stroke_dasharray: None,
-            });
+                        })));
         }
 
         // Advance lower to current upper for the next series
@@ -3575,14 +3582,14 @@ fn add_contour(cp: &ContourPlot, scene: &mut Scene, computed: &ComputedLayout) {
             let color = level_color(lvl);
             let d = contour_fill_path(&cp.z, &cp.x_coords, &cp.y_coords, lvl, computed);
             if d.is_empty() { continue; }
-            scene.add(Primitive::Path {
+            scene.add(Primitive::Path(Box::new(PathData {
                 d,
                 fill: Some(color),
                 stroke: "none".into(),
                 stroke_width: 0.0,
                 opacity: None,
                 stroke_dasharray: None,
-            });
+                        })));
         }
 
         // 3. Draw iso-lines on top.
@@ -3590,14 +3597,14 @@ fn add_contour(cp: &ContourPlot, scene: &mut Scene, computed: &ComputedLayout) {
             let stroke = cp.line_color.clone().unwrap_or_else(|| "black".to_string());
             let d = contour_path(&cp.z, &cp.x_coords, &cp.y_coords, lvl, computed);
             if d.is_empty() { continue; }
-            scene.add(Primitive::Path {
+            scene.add(Primitive::Path(Box::new(PathData {
                 d,
                 fill: None,
                 stroke,
                 stroke_width: cp.line_width,
                 opacity: None,
                 stroke_dasharray: None,
-            });
+                        })));
         }
     } else {
         // Lines-only mode: one path per level, colored by the colormap (or fixed line_color).
@@ -3605,14 +3612,14 @@ fn add_contour(cp: &ContourPlot, scene: &mut Scene, computed: &ComputedLayout) {
             let stroke = cp.line_color.clone().unwrap_or_else(|| level_color(lvl));
             let d = contour_path(&cp.z, &cp.x_coords, &cp.y_coords, lvl, computed);
             if d.is_empty() { continue; }
-            scene.add(Primitive::Path {
+            scene.add(Primitive::Path(Box::new(PathData {
                 d,
                 fill: None,
                 stroke,
                 stroke_width: cp.line_width,
                 opacity: None,
                 stroke_dasharray: None,
-            });
+                        })));
         }
     }
 }
@@ -3681,14 +3688,14 @@ fn add_chord(chord: &ChordPlot, scene: &mut Scene, computed: &ComputedLayout) {
              L {x2i} {y2i} A {inner_r} {inner_r} 0 {laf} 0 {x1i} {y1i} Z"
         );
         let color = node_color(i);
-        scene.add(Primitive::Path {
+        scene.add(Primitive::Path(Box::new(PathData {
             d,
             fill: Some(color),
             stroke: "none".into(),
             stroke_width: 0.0,
             opacity: None,
             stroke_dasharray: None,
-        });
+                })));
     }
 
     // ── Draw labels ──
@@ -3757,14 +3764,14 @@ fn add_chord(chord: &ChordPlot, scene: &mut Scene, computed: &ComputedLayout) {
                     "M {x1} {y1} A {inner_r} {inner_r} 0 {laf} 1 {x2} {y2} \
                      C {cx} {cy} {cx} {cy} {x1} {y1} Z"
                 );
-                scene.add(Primitive::Path {
+                scene.add(Primitive::Path(Box::new(PathData {
                     d,
                     fill: Some(node_color(i)),
                     stroke: "none".into(),
                     stroke_width: 0.0,
                     opacity: Some(chord.ribbon_opacity),
                     stroke_dasharray: None,
-                });
+                                })));
                 continue;
             }
 
@@ -3800,14 +3807,14 @@ fn add_chord(chord: &ChordPlot, scene: &mut Scene, computed: &ComputedLayout) {
                  C {cx} {cy} {cx} {cy} {xi1} {yi1} Z"
             );
 
-            scene.add(Primitive::Path {
+            scene.add(Primitive::Path(Box::new(PathData {
                 d,
                 fill: Some(node_color(i)),
                 stroke: "none".into(),
                 stroke_width: 0.0,
                 opacity: Some(chord.ribbon_opacity),
                 stroke_dasharray: None,
-            });
+                        })));
         }
     }
 
@@ -4011,14 +4018,14 @@ fn add_sankey(sankey: &SankeyPlot, scene: &mut Scene, computed: &ComputedLayout)
             }
         };
 
-        scene.add(Primitive::Path {
+        scene.add(Primitive::Path(Box::new(PathData {
             d,
             fill: Some(fill),
             stroke: "none".into(),
             stroke_width: 0.0,
             opacity: Some(sankey.link_opacity),
             stroke_dasharray: None,
-        });
+                })));
     }
 
     // ── Step 7: Draw node labels (above ribbons so text is never obscured) ──
@@ -4623,14 +4630,14 @@ fn add_phylo_tree(tree: &PhyloTree, scene: &mut Scene, computed: &ComputedLayout
                     "M {:.3} {:.3} A {:.3} {:.3} 0 {} 1 {:.3} {:.3}",
                     x_start, y_start, r_i, r_i, large_arc, x_end, y_end
                 );
-                scene.elements.push(Primitive::Path {
+                scene.elements.push(Primitive::Path(Box::new(PathData {
                     d,
                     fill: None,
                     stroke: node_color[i].clone(),
                     stroke_width: sw,
                     opacity: None,
                     stroke_dasharray: None,
-                });
+                                })));
             }
         }
     }
@@ -4809,14 +4816,14 @@ fn add_synteny(synteny: &SyntenyPlot, scene: &mut Scene, computed: &ComputedLayo
             )
         };
 
-        scene.elements.push(Primitive::Path {
+        scene.elements.push(Primitive::Path(Box::new(PathData {
             d,
             fill: Some(color.clone()),
             stroke: color,
             stroke_width: 0.3,
             opacity: Some(synteny.block_opacity),
             stroke_dasharray: None,
-        });
+                })));
     }
 
     // Step 2 — Draw sequence bars (on top of ribbons)
