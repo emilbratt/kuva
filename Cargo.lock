@@ -924,7 +924,6 @@ dependencies = [
  "plotters-svg",
  "rand",
  "rand_distr",
- "rayon",
  "resvg 0.44.0",
  "ryu",
  "svg2pdf",

@@ -1,7 +1,6 @@
 use crate::render::render_utils::{self, percentile, linear_regression, pearson_corr};
 use std::collections::HashMap;
 use std::fmt::Write;
-use rayon::prelude::*;
 use crate::render::layout::{Layout, ComputedLayout};
 use crate::render::plots::Plot;
 use crate::render::axis::{add_axes_and_grid, add_labels_and_title, add_y2_axis};
@@ -356,7 +355,7 @@ fn add_scatter(scatter: &ScatterPlot, scene: &mut Scene, computed: &ComputedLayo
 
     if uniform_circles {
         let (cx_vec, cy_vec): (Vec<f64>, Vec<f64>) = scatter.data
-            .par_iter()
+            .iter()
             .map(|point| (computed.map_x(point.x), computed.map_y(point.y)))
             .unzip();
         scene.add(Primitive::CircleBatch {
@@ -1198,12 +1197,12 @@ fn add_heatmap(heatmap: &Heatmap, scene: &mut Scene, computed: &ComputedLayout) 
     let cmap = heatmap.color_map.clone();
     let total = rows * cols;
 
-    // Build rect data in parallel across rows.
+    // Build rect data across rows.
     struct CellData { x: f64, y: f64, w: f64, h: f64, fill: Color }
     let cell_data: Vec<CellData> = heatmap.data
-        .par_iter()
+        .iter()
         .enumerate()
-        .flat_map_iter(|(i, row)| {
+        .flat_map(|(i, row)| {
             let cmap = cmap.clone();
             row.iter().enumerate().map(move |(j, &value)| {
                 let x0 = computed.map_x(j as f64 + 0.5);
