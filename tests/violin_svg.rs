@@ -53,7 +53,7 @@ fn test_violin_random_data() {
     // Group C: Right-skewed (exponential-like)
     let c_values: Vec<f64> = (0..2000).map(|_| {
         let u: f64 = rng.random();
-        -1.0 * (1.0 - u).ln() * 1.5 // inverse CDF for exponential
+        -(1.0 - u).ln() * 1.5 // inverse CDF for exponential
     }).collect();
 
     let violin =  ViolinPlot::new()
@@ -141,7 +141,7 @@ fn test_violin_degenerate_constant() {
 #[test]
 fn test_violin_single_value() {
     let violin = ViolinPlot::new()
-        .with_group("Single", vec![3.14f64])
+        .with_group("Single", vec![std::f64::consts::PI])
         .with_color("orange")
         .with_width(30.0);
 
