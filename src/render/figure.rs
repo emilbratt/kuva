@@ -501,6 +501,7 @@ fn clone_layout(l: &Layout) -> Layout {
     new.legend_title = l.legend_title.clone();
     new.legend_groups = l.legend_groups.clone();
     new.legend_box = l.legend_box;
+    new.legend_height = l.legend_height;
     new.log_x = l.log_x;
     new.log_y = l.log_y;
     new.suppress_x_ticks = l.suppress_x_ticks;

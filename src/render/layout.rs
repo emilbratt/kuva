@@ -119,6 +119,9 @@ pub struct Layout {
     pub legend_groups: Option<Vec<LegendGroup>>,
     /// Draw background + border rects around the legend. Default: true.
     pub legend_box: bool,
+    /// Override the computed legend height. When `None`, height is auto-computed from
+    /// the number of entries/groups. Set explicitly via `with_legend_height(px)`.
+    pub legend_height: Option<f64>,
     pub log_x: bool,
     pub log_y: bool,
     pub annotations: Vec<TextAnnotation>,
@@ -214,6 +217,7 @@ impl Layout {
             legend_title: None,
             legend_groups: None,
             legend_box: true,
+            legend_height: None,
             log_x: false,
             log_y: false,
             annotations: Vec::new(),
@@ -535,7 +539,7 @@ impl Layout {
 
         if has_legend {
             layout = layout.with_show_legend();
-            let dynamic_width = max_label_len as f64 * 7.0 + 35.0;
+            let dynamic_width = max_label_len as f64 * 8.5 + 35.0;
             layout.legend_width = dynamic_width.max(80.0);
         }
 
@@ -680,7 +684,7 @@ impl Layout {
     /// Auto-sizes `legend_width` from the longest label.
     pub fn with_legend_entries(mut self, entries: Vec<LegendEntry>) -> Self {
         let max_chars = entries.iter().map(|e| e.label.len()).max().unwrap_or(4);
-        self.legend_width = (max_chars as f64 * 7.0 + 35.0).max(80.0);
+        self.legend_width = (max_chars as f64 * 8.5 + 35.0).max(80.0);
         self.show_legend = true;
         self.legend_entries = Some(entries);
         self
@@ -720,6 +724,18 @@ impl Layout {
             entries,
         });
         self.show_legend = true;
+        self
+    }
+
+    /// Override the auto-computed legend width. Use when labels overflow the default box.
+    pub fn with_legend_width(mut self, px: f64) -> Self {
+        self.legend_width = px;
+        self
+    }
+
+    /// Override the auto-computed legend height. Use when content overflows the default box.
+    pub fn with_legend_height(mut self, px: f64) -> Self {
+        self.legend_height = Some(px);
         self
     }
 
@@ -902,7 +918,7 @@ impl Layout {
             }
         }
         if max_secondary_label > 0 {
-            let needed = max_secondary_label as f64 * 7.0 + 35.0;
+            let needed = max_secondary_label as f64 * 8.5 + 35.0;
             if needed > self.legend_width {
                 self.legend_width = needed;
                 self.show_legend = true;
@@ -960,6 +976,8 @@ pub struct ComputedLayout {
     pub y_ticks: usize,
     pub legend_position: LegendPosition,
     pub legend_width: f64,
+    /// Optional explicit legend height override from `Layout::with_legend_height`.
+    pub legend_height_override: Option<f64>,
     pub log_x: bool,
     pub log_y: bool,
     pub font_family: Option<String>,
@@ -1171,6 +1189,7 @@ impl ComputedLayout {
             y_ticks,
             legend_position: layout.legend_position,
             legend_width: layout.legend_width,
+            legend_height_override: layout.legend_height,
             log_x: layout.log_x,
             log_y: layout.log_y,
             font_family: layout.font_family.clone()

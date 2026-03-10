@@ -1624,14 +1624,20 @@ fn add_legend(legend: &Legend, scene: &mut Scene, computed: &ComputedLayout) {
     let legend_padding = 10.0;
     let line_height = computed.legend_line_height;
 
-    // Height depends on groups (each group adds a title row) + optional top title
+    // Height depends on groups (each group adds a title row) + optional top title.
+    // Between consecutive groups an extra half line-height gap is added so the
+    // visual separation between groups is larger than between a title and its members.
+    let n_groups = legend.groups.as_ref().map_or(0, |g| g.len());
+    let group_gap = line_height * 0.5;
     let entry_rows = if let Some(ref groups) = legend.groups {
         groups.iter().map(|g| g.entries.len() + 1).sum::<usize>()
     } else {
         legend.entries.len()
     };
     let title_rows = if legend.title.is_some() { 1 } else { 0 };
-    let legend_height = (entry_rows + title_rows) as f64 * line_height + legend_padding * 2.0;
+    let inter_group_extra = if n_groups > 1 { (n_groups - 1) as f64 * group_gap } else { 0.0 };
+    let computed_height = (entry_rows + title_rows) as f64 * line_height + inter_group_extra + legend_padding * 2.0;
+    let legend_height = computed.legend_height_override.unwrap_or(computed_height);
 
     let plot_left   = computed.margin_left;
     let plot_right  = computed.width - computed.margin_right;
@@ -1643,13 +1649,20 @@ fn add_legend(legend: &Legend, scene: &mut Scene, computed: &ComputedLayout) {
     let inset       = 8.0;
 
     let (legend_x, legend_y) = match computed.legend_position {
-        // Inside (overlay, inset from axes)
-        LegendPosition::InsideTopRight     => (plot_right - legend_width - inset, plot_top + inset),
-        LegendPosition::InsideTopLeft      => (plot_left + inset, plot_top + inset),
-        LegendPosition::InsideBottomRight  => (plot_right - legend_width - inset, plot_bottom - legend_height - inset),
-        LegendPosition::InsideBottomLeft   => (plot_left + inset, plot_bottom - legend_height - inset),
-        LegendPosition::InsideTopCenter    => (plot_cx - legend_width / 2.0, plot_top + inset),
-        LegendPosition::InsideBottomCenter => (plot_cx - legend_width / 2.0, plot_bottom - legend_height - inset),
+        // Inside (overlay, inset from axes).
+        // Box edges: top = legend_y - legend_padding, left = legend_x - 5,
+        //            right = legend_x - 5 + legend_width.
+        // We want each box edge to be exactly `inset` from the plot boundary, so:
+        //   legend_y = plot_edge + inset + legend_padding  (top-aligned)
+        //   legend_y = plot_edge - inset - legend_height + legend_padding  (bottom-aligned)
+        //   legend_x = plot_edge + inset + 5  (left-aligned)
+        //   legend_x = plot_edge - inset - legend_width + 5  (right-aligned)
+        LegendPosition::InsideTopRight     => (plot_right - inset - legend_width + 5.0, plot_top + inset + legend_padding),
+        LegendPosition::InsideTopLeft      => (plot_left  + inset + 5.0,                plot_top + inset + legend_padding),
+        LegendPosition::InsideBottomRight  => (plot_right - inset - legend_width + 5.0, plot_bottom - inset - legend_height + legend_padding),
+        LegendPosition::InsideBottomLeft   => (plot_left  + inset + 5.0,                plot_bottom - inset - legend_height + legend_padding),
+        LegendPosition::InsideTopCenter    => (plot_cx - legend_width / 2.0 + 5.0,      plot_top + inset + legend_padding),
+        LegendPosition::InsideBottomCenter => (plot_cx - legend_width / 2.0 + 5.0,      plot_bottom - inset - legend_height + legend_padding),
         // Outside Right
         LegendPosition::OutsideRightTop    => (right_x, plot_top),
         LegendPosition::OutsideRightMiddle => (right_x, (plot_top + plot_bottom) / 2.0 - legend_height / 2.0),
@@ -1712,7 +1725,10 @@ fn add_legend(legend: &Legend, scene: &mut Scene, computed: &ComputedLayout) {
     }
 
     if let Some(ref groups) = legend.groups {
-        for group in groups {
+        for (i, group) in groups.iter().enumerate() {
+            if i > 0 {
+                cur_y += group_gap;
+            }
             scene.add(Primitive::Text {
                 x: legend_x + 5.0,
                 y: cur_y + 5.0,
