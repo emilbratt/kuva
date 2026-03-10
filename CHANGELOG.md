@@ -43,7 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`LegendGroup` struct** — `{ title: String, entries: Vec<LegendEntry> }`; exported from `kuva::plot`
 - **`Layout::with_legend_width(px)`** — override the auto-computed legend box width; escape hatch when labels are wider than the heuristic estimate
 - **`Layout::with_legend_height(px)`** — override the auto-computed legend box height; escape hatch for manually controlled legend sizing
-- **`Layout::with_scale(f)`** — uniform scale factor (default `1.0`) for all plot chrome: font sizes, margins, tick mark lengths, stroke widths, legend padding/swatch geometry, and annotation arrow sizes. Canvas `width`/`height` are unaffected. Expose as `--scale` in the CLI. `TextAnnotation::font_size` and `ReferenceLine::stroke_width` are user-set and are not auto-scaled.
+- **`Layout::with_scale(f)`** — uniform scale factor (default `1.0`) for all plot chrome: font sizes, margins, tick mark lengths, stroke widths, legend padding/swatch geometry, and annotation arrow sizes. Canvas `width`/`height` are unaffected. `TextAnnotation::font_size` and `ReferenceLine::stroke_width` are user-set and are not auto-scaled; scale them manually when needed.
+- **`--scale` CLI flag** — exposes `with_scale` on all subcommands via `BaseArgs`
 
 ### Changed
 
