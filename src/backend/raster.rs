@@ -112,8 +112,7 @@ impl RasterBackend {
                                 paint.set_color(color);
                                 paint.anti_alias = true;
                                 let sw = stroke_width.unwrap_or(1.0) as f32;
-                                let mut sk_stroke = Stroke::default();
-                                sk_stroke.width = sw;
+                                let sk_stroke = Stroke { width: sw, ..Stroke::default() };
                                 let mut pb = PathBuilder::new();
                                 pb.push_rect(rect);
                                 if let Some(path) = pb.finish() {
@@ -142,8 +141,7 @@ impl RasterBackend {
                         let mut paint = Paint::default();
                         paint.set_color(color);
                         paint.anti_alias = true;
-                        let mut sk_stroke = Stroke::default();
-                        sk_stroke.width = *stroke_width as f32;
+                        let sk_stroke = Stroke { width: *stroke_width as f32, ..Stroke::default() };
                         let mut pb = PathBuilder::new();
                         pb.move_to(*x1 as f32, *y1 as f32);
                         pb.line_to(*x2 as f32, *y2 as f32);
@@ -179,8 +177,7 @@ impl RasterBackend {
                                 let mut paint = Paint::default();
                                 paint.set_color(color);
                                 paint.anti_alias = true;
-                                let mut sk_stroke = Stroke::default();
-                                sk_stroke.width = pd.stroke_width as f32;
+                                let sk_stroke = Stroke { width: pd.stroke_width as f32, ..Stroke::default() };
                                 pixmap.stroke_path(
                                     &path,
                                     &paint,
