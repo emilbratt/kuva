@@ -339,6 +339,8 @@ These can also be set via a `Theme` — see the [Themes](./themes.md) reference.
 | `.with_legend_box(bool)` | Show or hide the legend background and border box (default `true`) |
 | `.with_legend_title(s)` | Render a bold title row above all legend entries |
 | `.with_legend_group(title, entries)` | Add a labelled group of entries; multiple calls stack |
+| `.with_legend_width(px)` | Override the auto-computed legend box width |
+| `.with_legend_height(px)` | Override the auto-computed legend box height |
 
 `LegendPosition` variants (grouped by placement zone):
 
@@ -376,6 +378,19 @@ These can also be set via a `Theme` — see the [Themes](./themes.md) reference.
 |---------|-----------|
 | `Custom(x, y)` | Absolute SVG canvas pixel coordinates |
 | `DataCoords(x, y)` | Data-space coordinates mapped through `map_x`/`map_y` at render time |
+
+### Legend sizing overrides
+
+The legend box dimensions are computed automatically — width from the longest label (at ~8.5 px per character), height from the number of entries and groups. If the auto-sizing is off for your data, override either dimension explicitly:
+
+```rust,no_run
+# use kuva::render::layout::Layout;
+# use kuva::render::plots::Plot;
+# let plots: Vec<Plot> = vec![];
+let layout = Layout::auto_from_plots(&plots)
+    .with_legend_width(180.0)   // wider box for long labels
+    .with_legend_height(120.0); // taller box for manual height control
+```
 
 ### Typography
 

@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Layout::with_legend_group(title, entries)`** — adds a labelled group of entries; multiple calls stack and take priority over `with_legend_entries`
 - **`Layout::with_legend_at_data(x, y)`** — places the legend at data-space coordinates (`DataCoords` variant); no right-margin reserved
 - **`LegendGroup` struct** — `{ title: String, entries: Vec<LegendEntry> }`; exported from `kuva::plot`
+- **`Layout::with_legend_width(px)`** — override the auto-computed legend box width; escape hatch when labels are wider than the heuristic estimate
+- **`Layout::with_legend_height(px)`** — override the auto-computed legend box height; escape hatch for manually controlled legend sizing
 
 ### Changed
 
@@ -48,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Layout` field `legend_xy: Option<(f64, f64)>` removed — superseded by `Custom(x, y)` in the enum
 - Margin calculation in `ComputedLayout::from_layout` is now position-aware: `Inside*`, `Custom`, and `DataCoords` variants add no margin; the 12 `Outside*` variants expand the appropriate edge (right/left/top/bottom)
 - `render_legend_at` signature extended with `groups`, `title`, and `show_box` parameters (used by `Figure` shared-legend rendering)
+- Legend width auto-sizing character multiplier increased from 7.0 → 8.5 px/char; reduces overflow for wide-glyph labels (e.g. "Unmapped" on Sankey plots)
 
 ### Fixed
 
