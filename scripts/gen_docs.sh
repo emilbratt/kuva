@@ -19,6 +19,7 @@ EXAMPLES=(
     histogram
     histogram2d
     layout
+    legends
     line
     manhattan
     phylo

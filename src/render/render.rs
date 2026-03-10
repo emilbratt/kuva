@@ -1645,7 +1645,9 @@ fn add_legend(legend: &Legend, scene: &mut Scene, computed: &ComputedLayout) {
     let plot_bottom = computed.height - computed.margin_bottom;
     let plot_cx     = (plot_left + plot_right) / 2.0;
     let right_x     = computed.width - computed.margin_right + computed.y2_axis_width + 10.0;
-    let left_x      = 5.0;
+    // Right-align the left legend flush with the Y axis (same ~5px gap as OutsideRight).
+    // Box right edge = left_x - legend_padding + legend_width = plot_left - 5.
+    let left_x      = plot_left - legend_width;
     let inset       = 8.0;
 
     let (legend_x, legend_y) = match computed.legend_position {
@@ -1671,14 +1673,14 @@ fn add_legend(legend: &Legend, scene: &mut Scene, computed: &ComputedLayout) {
         LegendPosition::OutsideLeftTop     => (left_x, plot_top),
         LegendPosition::OutsideLeftMiddle  => (left_x, (plot_top + plot_bottom) / 2.0 - legend_height / 2.0),
         LegendPosition::OutsideLeftBottom  => (left_x, plot_bottom - legend_height),
-        // Outside Top
-        LegendPosition::OutsideTopLeft     => (plot_left, legend_padding),
-        LegendPosition::OutsideTopCenter   => (plot_cx - legend_width / 2.0, legend_padding),
-        LegendPosition::OutsideTopRight    => (plot_right - legend_width, legend_padding),
-        // Outside Bottom
-        LegendPosition::OutsideBottomLeft   => (plot_left, computed.height - computed.margin_bottom + 10.0),
-        LegendPosition::OutsideBottomCenter => (plot_cx - legend_width / 2.0, computed.height - computed.margin_bottom + 10.0),
-        LegendPosition::OutsideBottomRight  => (plot_right - legend_width, computed.height - computed.margin_bottom + 10.0),
+        // Outside Top — legend_y = legend_padding + 10 so box top = 10px from canvas top edge.
+        LegendPosition::OutsideTopLeft     => (plot_left, legend_padding + 10.0),
+        LegendPosition::OutsideTopCenter   => (plot_cx - legend_width / 2.0, legend_padding + 10.0),
+        LegendPosition::OutsideTopRight    => (plot_right - legend_width, legend_padding + 10.0),
+        // Outside Bottom — legend_y places box top 10px below the plot-area bottom edge.
+        LegendPosition::OutsideBottomLeft   => (plot_left, computed.height - computed.margin_bottom + legend_padding + 10.0),
+        LegendPosition::OutsideBottomCenter => (plot_cx - legend_width / 2.0, computed.height - computed.margin_bottom + legend_padding + 10.0),
+        LegendPosition::OutsideBottomRight  => (plot_right - legend_width, computed.height - computed.margin_bottom + legend_padding + 10.0),
         // Custom — absolute canvas pixel coordinates
         LegendPosition::Custom(x, y)        => (x, y),
         // DataCoords — mapped through ComputedLayout

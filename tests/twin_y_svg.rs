@@ -153,10 +153,13 @@ fn test_twin_y_y_label_position() {
     std::fs::write("test_outputs/twin_y_y_label_pos.svg", svg.clone()).unwrap();
 
     let label_x = extract_text_x(&svg, "Temp").expect("y-label 'Temp' not found in SVG");
-    let expected_x = computed.label_size as f64 * 0.5;
+    // Y label is placed just left of tick labels: margin_left - 8 - y_tick_label_px - 5 - label_size/2.
+    let expected_x = (computed.margin_left - 8.0 - computed.y_tick_label_px - 5.0
+        - computed.label_size as f64 * 0.5)
+        .max(computed.label_size as f64 * 0.5 + 3.0);
     assert!(
         (label_x - expected_x).abs() < 0.5,
-        "y-label x ({label_x}) should be ~{expected_x} (label_size * 0.5)"
+        "y-label x ({label_x}) should be ~{expected_x:.1} (margin_left - tick_label - gaps)"
     );
 }
 

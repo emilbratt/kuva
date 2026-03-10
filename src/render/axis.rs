@@ -475,7 +475,13 @@ pub fn add_labels_and_title(scene: &mut Scene, computed: &ComputedLayout, layout
         if let Some(label) = &layout.y_label {
             let (dx, dy) = layout.y_label_offset;
             scene.add(Primitive::Text {
-                x: computed.label_size as f64 * 0.5 + dx,
+                // Place the Y label just left of the tick labels with a 5 px gap.
+                // Layout: [3px edge][Y-label][5px gap][tick-labels][8px gap][axis]
+                // y_label_center = margin_left - 8 - y_tick_label_px - 5 - label_size/2
+                // Clamped so the label never goes closer than 8px to the canvas left edge.
+                x: (computed.margin_left - 8.0 - computed.y_tick_label_px - 5.0
+                    - computed.label_size as f64 * 0.5 + dx)
+                    .max(computed.label_size as f64 * 0.5 + 8.0),
                 y: computed.height / 2.0 + dy,
                 content: label.clone(),
                 size: computed.label_size,

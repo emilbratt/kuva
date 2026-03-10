@@ -711,16 +711,31 @@ impl Layout {
     }
 
     /// Set a bold title row above legend entries.
+    /// Also widens `legend_width` if the title text is wider than the current box.
     pub fn with_legend_title<S: Into<String>>(mut self, title: S) -> Self {
-        self.legend_title = Some(title.into());
+        let t = title.into();
+        // Title is centre-anchored; needs legend_width >= title_px + 10 to stay inside the box.
+        let needed = (t.len() as f64 * 8.5 + 10.0).max(80.0);
+        if needed > self.legend_width {
+            self.legend_width = needed;
+        }
+        self.legend_title = Some(t);
         self
     }
 
     /// Add a labelled group of legend entries. Multiple calls stack; takes priority over
     /// `with_legend_entries`.
+    /// Also widens `legend_width` to accommodate the group title and entry labels.
     pub fn with_legend_group<S: Into<String>>(mut self, title: S, entries: Vec<LegendEntry>) -> Self {
+        let t = title.into();
+        // Group title is start-anchored at legend_x+5; needs legend_width >= title_px + 10.
+        let needed_title = (t.len() as f64 * 8.5 + 10.0).max(80.0);
+        // Entry labels start at legend_x+25 (after swatch); same formula as with_legend_entries.
+        let max_entry_chars = entries.iter().map(|e| e.label.len()).max().unwrap_or(0);
+        let needed_entries = (max_entry_chars as f64 * 8.5 + 35.0).max(80.0);
+        self.legend_width = self.legend_width.max(needed_title).max(needed_entries);
         self.legend_groups.get_or_insert_with(Vec::new).push(LegendGroup {
-            title: title.into(),
+            title: t,
             entries,
         });
         self.show_legend = true;
@@ -978,6 +993,9 @@ pub struct ComputedLayout {
     pub legend_width: f64,
     /// Optional explicit legend height override from `Layout::with_legend_height`.
     pub legend_height_override: Option<f64>,
+    /// Pixel width of the widest y-axis tick label, computed from actual tick strings.
+    /// Used in `axis.rs` to position the Y axis label flush with the tick labels.
+    pub y_tick_label_px: f64,
     pub log_x: bool,
     pub log_y: bool,
     pub font_family: Option<String>,
@@ -1050,18 +1068,48 @@ impl ComputedLayout {
         } else {
             tick_size + label_size + 25.0
         };
-        // Left: axis label + y tick label text width + gap to axis.
-        // For category y-axes (e.g. DotPlot) the tick labels can be long strings;
-        // compute width from the longest category name so they stay on-canvas.
+        // Left: axis label + y tick label text width + gaps.
+        // Compute the actual maximum tick label pixel width from real tick strings so the
+        // left margin is exactly as wide as needed and the Y axis label snugs up against
+        // the tick labels rather than sitting at a fixed canvas-edge offset.
+        //
+        // Layout (left→right):  [3px edge] [Y-label] [5px gap] [tick labels] [8px gap] [axis]
+        //   → margin_left = label_size + y_tick_label_px + 16
+        let y_tick_label_px: f64 = if layout.suppress_y_ticks {
+            0.0
+        } else if let Some(ref cats) = layout.y_categories {
+            let max_chars = cats.iter().map(|s| s.len()).max().unwrap_or(4) as f64;
+            (max_chars * tick_size * 0.6).max(tick_size * 2.0)
+        } else if layout.log_y {
+            let ticks_log = render_utils::generate_ticks_log(
+                layout.y_range.0.max(1e-300), layout.y_range.1.max(1e-300),
+            );
+            let max_chars = ticks_log.iter()
+                .map(|&v| render_utils::format_log_tick(v).len())
+                .max().unwrap_or(3) as f64;
+            (max_chars * tick_size * 0.6).max(tick_size * 2.0)
+        } else if layout.y_datetime.is_some() {
+            tick_size * 5.0 // datetime labels vary; ~5 char-widths is a reasonable default
+        } else {
+            // Generate a preliminary set of tick values from the raw y_range (no auto-ranging
+            // yet) and format them to find the widest label string.  Using layout.y_range
+            // rather than the final auto-ranged range is fine here — the formatted width
+            // changes very little after nice-rounding.
+            let n = if layout.ticks > 0 { layout.ticks } else { 5 };
+            let tick_vals = if let Some(step) = layout.y_tick_step {
+                render_utils::generate_ticks_with_step(layout.y_range.0, layout.y_range.1, step)
+            } else {
+                render_utils::generate_ticks(layout.y_range.0, layout.y_range.1, n)
+            };
+            let max_chars = tick_vals.iter()
+                .map(|&v| layout.y_tick_format.format(v).len())
+                .max().unwrap_or(3) as f64;
+            (max_chars * tick_size * 0.6).max(tick_size * 2.0)
+        };
         let mut margin_left = if layout.suppress_y_ticks {
             10.0
         } else {
-            let char_w = tick_size * 0.6;
-            let max_y_chars = layout.y_categories.as_ref()
-                .and_then(|cats| cats.iter().map(|s| s.len()).max())
-                .unwrap_or(6) as f64; // 6 chars covers typical numeric labels like "1000.0"
-            let tick_label_px = (max_y_chars * char_w).max(tick_size * 3.0);
-            label_size + tick_label_px + 15.0
+            label_size + y_tick_label_px + 21.0
         };
         let mut margin_right = label_size;
 
@@ -1190,6 +1238,7 @@ impl ComputedLayout {
             legend_position: layout.legend_position,
             legend_width: layout.legend_width,
             legend_height_override: layout.legend_height,
+            y_tick_label_px,
             log_x: layout.log_x,
             log_y: layout.log_y,
             font_family: layout.font_family.clone()
