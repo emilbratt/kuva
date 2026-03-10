@@ -26,6 +26,7 @@ jobs:
           mkdir -p test_outputs smoke_test_outputs
           cargo ci-test
 
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
