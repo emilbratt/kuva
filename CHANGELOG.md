@@ -9,8 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`RidgelinePlot`** — ridgeline (joyplot) plot with stacked KDE density curves, one per group. Groups are labelled on the y-axis; the x-axis is the continuous data range. Supports `.with_group(label, data)`, `.with_group_color(label, data, color)`, `.with_groups(iter)`, `.with_filled(bool)`, `.with_opacity(f64)`, `.with_overlap(f64)`, `.with_bandwidth(f64)`, `.with_kde_samples(usize)`, `.with_stroke_width(f64)`, `.with_normalize(bool)`, `.with_legend(bool)`, and `.with_line_dash(s)`. CLI: `kuva ridgeline --value <COL> [--group-by <COL>] [--overlap <F>] [--filled] [--bandwidth <F>]`.
+- **`DensityPlot`** — kernel density estimate curve over a single numeric column. Gaussian KDE via Silverman's rule (or manual bandwidth), normalised to a proper probability density function (integral ≈ 1). Supports `.with_filled(bool)`, `.with_opacity(f64)`, `.with_bandwidth(f64)`, `.with_kde_samples(usize)`, `.with_stroke_width(f64)`, `.with_line_dash(s)`, `.with_legend(s)`, and `from_curve(x, y)` for pre-computed curves. Multi-group plots use one `DensityPlot` per group with `render_multiple` + palette. CLI: `kuva density --value <COL> [--color-by <COL>] [--filled] [--bandwidth <F>]`.
 - `Color` type (`render::color`) — 3-variant enum (Rgb/None/Css) replacing `String` for fill/stroke in the render pipeline; `Color::Rgb(u8,u8,u8)` is 4 bytes inline with zero heap allocation; `From<&str>` parses hex, rgb(), "none", and 50+ named CSS colors
 - `CircleBatch` and `RectBatch` — SoA (struct-of-arrays) `Primitive` variants with contiguous coordinate arrays for scatter and heatmap; all backends support them
+
+### Fixed
+
+- **Terminal legend swatch alignment** — `LegendShape::Line` swatches (density, line plots, reference-line entries) were hidden behind the legend background rect in terminal output because horizontal lines went to the lower-priority `line_char_bits` layer. Short lines (≤8 cells wide) now write to `char_grid` so they take priority over the background. A 4.2 px y-offset is added before the row mapping so the swatch lands in the same character row as its label.
+- **Terminal `LegendShape::Rect` row alignment** — legend colour swatches for all rect-style plots (stacked area, histogram, box, violin, etc.) could appear one row above their text label when a cell boundary fell between `swatch_cy` and `text_baseline`. The small-rect height snap now uses `height × 0.75` (the lower third of the rect) instead of the centre (`height × 0.5`), placing the swatch in the same character row as the label at all terminal sizes.
 
 ### Changed
 

@@ -121,7 +121,7 @@ cat gwas.tsv | kuva manhattan --chr-col chr --pvalue-col pvalue --terminal
 | `--ticks <N>` | `5` | Hint for number of tick marks |
 | `--no-grid` | off | Disable background grid |
 
-### Log scale *(scatter, line, histogram, hist2d)*
+### Log scale *(scatter, line, histogram, density, hist2d)*
 
 | Flag | Description |
 |---|---|
@@ -143,6 +143,8 @@ cat gwas.tsv | kuva manhattan --chr-col chr --pvalue-col pvalue --terminal
 - [line](#line)
 - [bar](#bar)
 - [histogram](#histogram)
+- [density](#density)
+- [ridgeline](#ridgeline)
 - [box](#box)
 - [violin](#violin)
 - [pie](#pie)
@@ -260,6 +262,53 @@ kuva histogram histogram.tsv --value-col value --bins 30
 
 kuva histogram histogram.tsv --bins 20 --normalize \
     --title "Expression distribution" --y-label "Density"
+```
+
+---
+
+## density
+
+Kernel density estimate of a single numeric column. Produces a smooth probability density curve; optionally fills the area underneath. Multi-group plots use one curve per group with palette colors.
+
+**Input:** a tabular file with at least one numeric column. When `--color-by` is used, an additional categorical column drives the grouping.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--value <COL>` | `0` | Column of numeric values to estimate |
+| `--color-by <COL>` | — | Group by this column; one curve per unique value |
+| `--filled` | off | Fill the area under each density curve |
+| `--bandwidth <F>` | *(Silverman)* | KDE bandwidth override |
+
+```bash
+kuva density samples.tsv --value expression \
+    --x-label "Expression" --y-label "Density" --title "Expression distribution"
+
+kuva density samples.tsv --value expression --color-by group --filled \
+    --title "Expression by group"
+```
+
+---
+
+## ridgeline
+
+Ridgeline plot (joyplot) — stacked KDE density curves, one per group. Groups are taken from one column; values from another.
+
+**Input:** a tabular file with at least one numeric column and an optional group column.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--value <COL>` | `0` | Column of numeric values |
+| `--group-by <COL>` | — | Group by this column; one ridge per unique value |
+| `--filled` | on | Fill the area under each ridge curve |
+| `--opacity <F>` | `0.7` | Fill opacity |
+| `--overlap <F>` | `0.5` | Ridge overlap factor (0 = no overlap, 1 = full cell height) |
+| `--bandwidth <F>` | *(Silverman)* | KDE bandwidth override |
+
+```bash
+kuva ridgeline samples.tsv --group-by group --value expression \
+    --x-label "Expression" --y-label "Group" --title "Expression by group"
+
+kuva ridgeline samples.tsv --group-by group --value expression --overlap 1.0
 ```
 
 ---

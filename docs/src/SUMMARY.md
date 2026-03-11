@@ -10,6 +10,8 @@
 - [Line Plot](./plots/line.md)
 - [Bar Chart](./plots/bar.md)
 - [Histogram](./plots/histogram.md)
+- [Density Plot](./plots/density.md)
+- [Ridgeline Plot](./plots/ridgeline.md)
 - [2D Histogram](./plots/histogram2d.md)
 - [Series Plot](./plots/series.md)
 - [Band Plot](./plots/band.md)
