@@ -4857,7 +4857,8 @@ pub fn render_twin_y(primary: Vec<Plot>, secondary: Vec<Plot>, layout: Layout) -
         for plot in primary.iter_mut().chain(secondary.iter_mut()) {
             match plot {
                 Plot::Scatter(_) | Plot::Line(_) | Plot::Series(_) |
-                Plot::Histogram(_) | Plot::Box(_) | Plot::Violin(_) | Plot::Band(_) | Plot::Strip(_) => {
+                Plot::Histogram(_) | Plot::Box(_) | Plot::Violin(_) | Plot::Band(_) |
+                Plot::Strip(_) | Plot::Density(_) => {
                     plot.set_color(&palette[color_idx]);
                     color_idx += 1;
                 }
@@ -4888,6 +4889,7 @@ pub fn render_twin_y(primary: Vec<Plot>, secondary: Vec<Plot>, layout: Layout) -
             Plot::Box(b)         => add_boxplot(b, &mut scene, &computed),
             Plot::Violin(v)      => add_violin(v, &mut scene, &computed),
             Plot::Strip(s)       => add_strip(s, &mut scene, &computed),
+            Plot::Density(d)     => add_density(d, &computed, &mut scene),
             Plot::StackedArea(s) => add_stacked_area(s, &mut scene, &computed),
             Plot::Waterfall(w)   => add_waterfall(w, &mut scene, &computed),
             Plot::Candlestick(c) => add_candlestick(c, &mut scene, &computed),
@@ -4905,6 +4907,7 @@ pub fn render_twin_y(primary: Vec<Plot>, secondary: Vec<Plot>, layout: Layout) -
             Plot::Box(b)         => add_boxplot(b, &mut scene, &computed_y2),
             Plot::Violin(v)      => add_violin(v, &mut scene, &computed_y2),
             Plot::Strip(s)       => add_strip(s, &mut scene, &computed_y2),
+            Plot::Density(d)     => add_density(d, &computed_y2, &mut scene),
             Plot::StackedArea(s) => add_stacked_area(s, &mut scene, &computed_y2),
             Plot::Waterfall(w)   => add_waterfall(w, &mut scene, &computed_y2),
             Plot::Candlestick(c) => add_candlestick(c, &mut scene, &computed_y2),
