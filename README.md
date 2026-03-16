@@ -89,6 +89,14 @@ Full documentation — plot type reference, API guide, CLI flag reference, theme
 
 ---
 
+## Contributors
+
+Thank you to everyone who has contributed to kuva!
+
+[@emilbratt](https://github.com/emilbratt) · [@jrmoynihan](https://github.com/jrmoynihan) · [@gabo515](https://github.com/gabo515) · [@iwer](https://github.com/iwer) · [@holtjma](https://github.com/holtjma)
+
+---
+
 ## Development note
 
 kuva was initially built by hand, with a working library and several plot types
