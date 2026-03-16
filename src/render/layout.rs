@@ -146,6 +146,15 @@ pub struct Layout {
     pub label_size: u32,
     pub tick_size: u32,
     pub body_size: u32,
+    /// Override axis line stroke width (px at scale=1). `None` = use scale default (1.0).
+    pub axis_line_width: Option<f64>,
+    /// Override tick mark stroke width (px at scale=1). `None` = use scale default (1.0).
+    pub tick_width: Option<f64>,
+    /// Override major tick mark length (px at scale=1). `None` = use scale default (5.0).
+    /// Minor tick length scales proportionally (60% of major).
+    pub tick_length: Option<f64>,
+    /// Override grid line stroke width (px at scale=1). `None` = use scale default (1.0).
+    pub grid_line_width: Option<f64>,
     pub theme: Theme,
     pub palette: Option<Palette>,
     pub x_tick_format: TickFormat,
@@ -251,6 +260,10 @@ impl Layout {
             label_size: 14,
             tick_size: 12,
             body_size: 12,
+            axis_line_width: None,
+            tick_width: None,
+            tick_length: None,
+            grid_line_width: None,
             theme: Theme::default(),
             palette: None,
             x_tick_format: TickFormat::Auto,
@@ -918,6 +931,32 @@ impl Layout {
         self
     }
 
+    /// Set the axis line stroke width in logical pixels (at scale 1.0).
+    /// Affects the X and Y axis border lines only, not ticks or grid.
+    pub fn with_axis_line_width(mut self, width: f64) -> Self {
+        self.axis_line_width = Some(width);
+        self
+    }
+
+    /// Set the tick mark stroke width in logical pixels (at scale 1.0).
+    pub fn with_tick_width(mut self, width: f64) -> Self {
+        self.tick_width = Some(width);
+        self
+    }
+
+    /// Set the major tick mark length in logical pixels (at scale 1.0).
+    /// Minor tick length is scaled proportionally (60% of major).
+    pub fn with_tick_length(mut self, length: f64) -> Self {
+        self.tick_length = Some(length);
+        self
+    }
+
+    /// Set the grid line stroke width in logical pixels (at scale 1.0).
+    pub fn with_grid_line_width(mut self, width: f64) -> Self {
+        self.grid_line_width = Some(width);
+        self
+    }
+
     pub fn with_theme(mut self, theme: Theme) -> Self {
         self.show_grid = theme.show_grid;
         if let Some(ref font) = theme.font_family {
@@ -1140,10 +1179,13 @@ pub struct ComputedLayout {
     pub polar_r_label_angle: Option<f64>,
     /// Scaled pixel constants for rendering, derived from `layout.scale`.
     /// Avoids threading the scale factor through every render function.
-    pub tick_mark_major: f64,       // 5.0 * scale — major tick mark extension
-    pub tick_mark_minor: f64,       // 3.0 * scale — minor tick mark extension
+    pub tick_mark_major: f64,       // 5.0 * scale (or layout.tick_length * scale)
+    pub tick_mark_minor: f64,       // 3.0 * scale (60% of major)
     pub tick_label_margin: f64,     // 8.0 * scale — gap from axis line to tick label text
-    pub axis_stroke_width: f64,     // 1.0 * scale — axis, grid, and tick stroke width
+    pub axis_stroke_width: f64,     // 1.0 * scale — base stroke width (annotations, plot shapes)
+    pub axis_line_width: f64,       // axis border lines (overridable via Layout::with_axis_line_width)
+    pub tick_stroke_width: f64,     // tick mark strokes (overridable via Layout::with_tick_width)
+    pub grid_stroke_width: f64,     // grid line strokes (overridable via Layout::with_grid_line_width)
     pub legend_padding: f64,        // 10.0 * scale — legend box internal padding
     pub legend_inset: f64,          // 8.0 * scale — Inside legend inset from plot edge
     pub legend_swatch_size: f64,    // 12.0 * scale — Rect/Line swatch length and height
@@ -1171,6 +1213,8 @@ impl ComputedLayout {
         let title_size = layout.title_size as f64 * s;
         let label_size = layout.label_size as f64 * s;
         let tick_size = layout.tick_size as f64 * s;
+        // Compute tick mark length early — needed for margin_left and tick_label_margin.
+        let tick_mark_major_px = layout.tick_length.map(|l| l * s).unwrap_or(5.0 * s);
 
         // Top: title height + padding, or small padding if no title
         let mut margin_top = if layout.title.is_some() {
@@ -1178,7 +1222,7 @@ impl ComputedLayout {
         } else {
             10.0 * s
         };
-        // Bottom: tick mark (5) + gap (5) + tick label + gap (5) + axis label + padding
+        // Bottom: tick_mark + gap(5) + tick_label + gap(5) + axis_label + padding(10)
         // When ticks are suppressed AND no rotation is requested (e.g. pure numeric axes),
         // keep only minimal space. When rotation IS set (e.g. Manhattan chromosome labels drawn
         // by the renderer itself), compute space for the rotated custom labels.
@@ -1192,10 +1236,10 @@ impl ComputedLayout {
                 .unwrap_or(10) as f64;
             let label_px = max_chars * char_w;
             let angle_rad = angle.abs() * std::f64::consts::PI / 180.0;
-            let needed = label_px * angle_rad.sin() + tick_size + 15.0 * s;
-            needed.max(tick_size + label_size + 25.0 * s)
+            let needed = label_px * angle_rad.sin() + tick_size + tick_mark_major_px + 10.0 * s;
+            needed.max(tick_size + label_size + tick_mark_major_px + 20.0 * s)
         } else {
-            tick_size + label_size + 25.0 * s
+            tick_size + label_size + tick_mark_major_px + 20.0 * s
         };
         // Left: axis label + y tick label text width + gaps.
         // Compute the actual maximum tick label pixel width from real tick strings so the
@@ -1238,7 +1282,9 @@ impl ComputedLayout {
         let mut margin_left = if layout.suppress_y_ticks {
             10.0 * s
         } else {
-            label_size + y_tick_label_px + 21.0 * s
+            // 16px = 3 edge + 5 label-to-ticklabels gap + 8 tick_label_margin base;
+            // tick_mark_major_px is added separately so the margin grows with tick length.
+            label_size + y_tick_label_px + 16.0 * s + tick_mark_major_px
         };
         // Estimate the overhang of the rightmost numeric x-tick label.
         // Tick labels are centred on their tick position (TextAnchor::Middle), so the
@@ -1433,10 +1479,13 @@ impl ComputedLayout {
             show_minor_grid: layout.show_minor_grid,
             x_bin_width: layout.x_bin_width,
             polar_r_label_angle: layout.polar_r_label_angle,
-            tick_mark_major: 5.0 * s,
-            tick_mark_minor: 3.0 * s,
-            tick_label_margin: 8.0 * s,
+            tick_mark_major: tick_mark_major_px,
+            tick_mark_minor: layout.tick_length.map(|l| l * s * 0.6).unwrap_or(3.0 * s),
+            tick_label_margin: tick_mark_major_px + 3.0 * s,
             axis_stroke_width: s,
+            axis_line_width: layout.axis_line_width.map(|w| w * s).unwrap_or(s),
+            tick_stroke_width: layout.tick_width.map(|w| w * s).unwrap_or(s),
+            grid_stroke_width: layout.grid_line_width.map(|w| w * s).unwrap_or(s),
             legend_padding: 10.0 * s,
             legend_inset: 8.0 * s,
             legend_swatch_size: 12.0 * s,
