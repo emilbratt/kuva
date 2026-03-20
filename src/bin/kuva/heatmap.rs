@@ -57,6 +57,32 @@ pub fn run(args: HeatmapArgs) -> Result<(), String> {
         return Err("heatmap input needs at least 2 columns (row label + data)".into());
     }
 
+    // SVG and PDF store one element per cell; beyond ~1 M cells the output is
+    // too large for any viewer to handle (svg2pdf will hit its node limit, and
+    // SVG files exceed several hundred MB).  PNG goes through SVG internally
+    // and has the same constraint.  Aggregate or downsample the data first.
+    let nrows = table.rows.len();
+    let ncells = nrows * (ncols - 1);
+    const CELL_LIMIT: usize = 1_000_000;
+    if ncells > CELL_LIMIT {
+        return Err(format!(
+            "heatmap has {ncells} cells ({nrows} rows × {} data columns), \
+             which exceeds the {CELL_LIMIT} cell limit for SVG/PDF/PNG output.\n\
+             \n\
+             Aggregate or downsample your data before plotting.  Examples:\n\
+             \n\
+             # Average every N rows with datamash:\n\
+             datamash -H groupby 1 mean 2,3,... < data.tsv | kuva heatmap\n\
+             \n\
+             # Keep only every Nth row with awk:\n\
+             awk 'NR==1 || NR%10==0' data.tsv | kuva heatmap\n\
+             \n\
+             # Pivot long-format data and aggregate in Python:\n\
+             # df.groupby('row').mean().to_csv('agg.tsv', sep='\\t')",
+            ncols - 1,
+        ));
+    }
+
     // Row labels: first column of each data row.
     let row_labels: Vec<String> = table.rows.iter()
         .map(|r| r[0].clone())
