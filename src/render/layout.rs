@@ -31,6 +31,20 @@ pub enum TickFormat {
     Custom(Arc<dyn Fn(f64) -> String + Send + Sync>),
 }
 
+impl std::fmt::Debug for TickFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Auto      => write!(f, "TickFormat::Auto"),
+            Self::Fixed(n)  => write!(f, "TickFormat::Fixed({n})"),
+            Self::Integer   => write!(f, "TickFormat::Integer"),
+            Self::Sci       => write!(f, "TickFormat::Sci"),
+            Self::Percent   => write!(f, "TickFormat::Percent"),
+            Self::Degree    => write!(f, "TickFormat::Degree"),
+            Self::Custom(_) => write!(f, "TickFormat::Custom(<fn>)"),
+        }
+    }
+}
+
 impl Clone for TickFormat {
     fn clone(&self) -> Self {
         match self {

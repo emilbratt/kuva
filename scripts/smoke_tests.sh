@@ -334,6 +334,22 @@ check "sankey link-gradient" \
     "$BIN" sankey "$DATA/sankey.tsv" --source-col source --target-col target --value-col value \
         --link-gradient --legend "read flow" --title "Flow Diagram"
 
+check "sankey flow-labels" \
+    "$BIN" sankey "$DATA/sankey.tsv" --source-col source --target-col target --value-col value \
+        --flow-labels --title "Flow Labels"
+
+check "sankey flow-percent" \
+    "$BIN" sankey "$DATA/sankey.tsv" --source-col source --target-col target --value-col value \
+        --flow-percent --title "Flow Percent"
+
+check "sankey flow-labels-unit" \
+    "$BIN" sankey "$DATA/sankey.tsv" --source-col source --target-col target --value-col value \
+        --flow-labels --flow-label-unit reads --flow-label-min-height 0 --title "Flow Labels Unit"
+
+check "sankey flow-labels-sci" \
+    "$BIN" sankey "$DATA/sankey.tsv" --source-col source --target-col target --value-col value \
+        --flow-labels --flow-label-format sci --title "Flow Labels Sci"
+
 # ── phylo ─────────────────────────────────────────────────────────────────────
 check "phylo edge-list" \
     "$BIN" phylo "$DATA/phylo.tsv" --parent-col parent --child-col child --length-col length \

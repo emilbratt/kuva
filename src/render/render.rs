@@ -4933,7 +4933,63 @@ fn add_sankey(sankey: &SankeyPlot, scene: &mut Scene, computed: &ComputedLayout)
             stroke_width: 0.0,
             opacity: Some(sankey.link_opacity),
             stroke_dasharray: None,
-                })));
+        })));
+
+        // ── Flow label ──
+        if sankey.flow_labels || sankey.flow_percent {
+            // Preferred: place label at the midpoint of the horizontal clear zone
+            // between the source node's label text right-extent and the target bar's
+            // left edge.  Fallback: if no clear zone exists (long labels in tight
+            // layouts), use t=0.65 so the label is still visible — it may overlap
+            // the source node label slightly, but hiding it entirely is worse.
+            let ts = computed.tick_size as f64;
+            let bs = computed.body_size as f64;
+            let edge_margin = 4.0_f64;
+
+            let src_label_right = if col[src] == 0 {
+                x_src + edge_margin   // source label is on the LEFT; right is clear
+            } else {
+                let chars = sankey.nodes[src].label.chars().count() as f64;
+                x_src + 6.0 + chars * bs * 0.6 + edge_margin
+            };
+            let clear_end = x_tgt - edge_margin;
+
+            let t = if clear_end - src_label_right >= ts {
+                // Clear zone exists: place at its midpoint.
+                ((src_label_right + clear_end) / 2.0 - x_src) / (x_tgt - x_src)
+            } else {
+                // No clear zone: fall back to 65% toward target.
+                0.65
+            }.clamp(0.05, 0.95);
+
+            let yw_src = (1.0 - t) * (1.0 - t) * (1.0 + 2.0 * t);
+            let yw_tgt = t * t * (3.0 - 2.0 * t);
+            let y_top_at_t = yw_src * y_src_top + yw_tgt * y_tgt_top;
+            let y_bot_at_t = yw_src * y_src_bot + yw_tgt * y_tgt_bot;
+            let ribbon_h_at_t = y_bot_at_t - y_top_at_t;
+            if ribbon_h_at_t >= sankey.flow_label_min_height {
+                let label_x = x_src + t * (x_tgt - x_src);
+                let label_y = (y_top_at_t + y_bot_at_t) / 2.0 + ts * 0.35;
+                let text = if sankey.flow_percent {
+                    format!("{:.1}%", (link.value / out_flow[src]) * 100.0)
+                } else {
+                    let formatted = sankey.flow_label_format.format(link.value);
+                    match &sankey.flow_label_unit {
+                        Some(unit) => format!("{formatted} {unit}"),
+                        None => formatted,
+                    }
+                };
+                scene.add(Primitive::Text {
+                    x: label_x,
+                    y: label_y,
+                    content: text,
+                    size: computed.tick_size,
+                    anchor: TextAnchor::Middle,
+                    rotate: None,
+                    bold: false,
+                });
+            }
+        }
     }
 
     // ── Step 7: Draw node labels (above ribbons so text is never obscured) ──
