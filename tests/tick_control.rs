@@ -271,3 +271,29 @@ fn test_axis_controls_combined() {
     assert!(svg.contains(r#"stroke-width="2.5""#), "tick width=2.5 should appear");
     assert!(svg.contains(r#"stroke-width="0.5""#), "grid line width=0.5 should appear");
 }
+
+/// Regression test: tick labels must never contain "-0".
+/// IEEE 754 negative zero (-0.0) formats as "-0" with Rust's {:.0} formatter.
+/// TickFormat::format() must normalise -0.0 → 0.0 before dispatching.
+#[test]
+fn test_no_negative_zero_tick_label() {
+    use kuva::render::layout::TickFormat;
+    // The direct formatter must not produce "-0"
+    assert_ne!(TickFormat::Auto.format(-0.0_f64),     "-0");
+    assert_ne!(TickFormat::Integer.format(-0.0_f64),  "-0");
+    assert_ne!(TickFormat::Fixed(1).format(-0.0_f64), "-0.0");
+    assert_ne!(TickFormat::Percent.format(-0.0_f64),  "-0.0%");
+
+    // A density plot with y-axis floor at 0.0 must not render "-0" on the y-axis.
+    // Force a layout where y_min can end up as -0.0 via the layout arithmetic.
+    use kuva::plot::DensityPlot;
+    use kuva::render::plots::Plot;
+    let dp = DensityPlot::new()
+        .with_data(vec![0.5_f64; 20])
+        .with_x_range(0.0, 1.0);
+    let plots = vec![Plot::Density(dp)];
+    let layout = Layout::auto_from_plots(&plots);
+    let svg = SvgBackend.render_scene(&render_multiple(plots, layout));
+    std::fs::write("test_outputs/tick_no_negative_zero.svg", &svg).unwrap();
+    assert!(!svg.contains(">-0<"), "SVG must not contain a '-0' tick label");
+}

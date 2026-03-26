@@ -246,3 +246,104 @@ fn test_density_multigroup_x_range() {
     let path_count = svg.matches("<path").count();
     assert!(path_count >= 2, "expected at least one path per group; got {path_count}");
 }
+
+// ── Boundary reflection tests (#47) ──────────────────────────────────────────
+
+/// Reflection: the KDE evaluated at the lower bound should be non-trivially
+/// higher than without reflection, because the ghost points restore probability
+/// mass that a plain Gaussian kernel would lose past x=0.
+/// We verify this by comparing density at x=0 with and without the bound set.
+#[test]
+fn test_density_reflection_raises_boundary_density() {
+    // Data concentrated near 0 — standard KDE would lose ~50% of kernel mass
+    // below x=0 at points right at the boundary.
+    let data: Vec<f64> = (0..50).map(|i| i as f64 * 0.02).collect(); // [0.0, 0.98]
+
+    // Without reflection: evaluate normally (tails extend past 0)
+    let dp_plain = DensityPlot::new().with_data(data.clone()).with_bandwidth(0.1);
+    // With reflection at x=0: ghost points restore lost mass
+    let dp_reflect = DensityPlot::new().with_data(data).with_bandwidth(0.1).with_x_lo(0.0);
+
+    // bounds() uses the same KDE path as the renderer; peak y with reflection
+    // should be higher (boundary is not underestimated).
+    let (_, (_, y_plain))  = Plot::Density(dp_plain).bounds().unwrap();
+    let (_, (_, y_reflect)) = Plot::Density(dp_reflect).bounds().unwrap();
+
+    // The reflected version should produce a meaningfully higher peak
+    // (reflection corrects the ~50% loss at the boundary).
+    assert!(y_reflect > y_plain,
+        "reflection should raise peak density; plain={y_plain:.4} reflect={y_reflect:.4}");
+}
+
+/// One-sided x_lo: the left boundary is clamped and reflected; the right tail
+/// is deliberately free to extend past data_max (> 0.79, possibly past 1.0).
+/// Use with_x_range(0.0, 1.0) when you need both sides clamped.
+#[test]
+fn test_density_x_lo_only() {
+    outdir();
+    let data: Vec<f64> = (0..80).map(|i| i as f64 * 0.01).collect(); // [0.0, 0.79]
+    let dp = DensityPlot::new()
+        .with_data(data)
+        .with_x_lo(0.0)
+        .with_filled(true);
+    let plot = Plot::Density(dp);
+    let ((x_min, x_max), _) = plot.bounds().unwrap();
+    assert_eq!(x_min, 0.0, "x_lo should clamp x_min to exactly 0.0");
+    assert!(x_max > 0.79, "right tail should still extend past data_max (one-sided bound)");
+
+    // Also renders without NaN
+    let plots = vec![plot];
+    let layout = Layout::auto_from_plots(&plots);
+    let svg = render_svg(plots, layout);
+    fs::write("test_outputs/density_x_lo_only.svg", &svg).unwrap();
+    assert!(!svg.contains("NaN"));
+    assert!(svg.contains("<path"));
+}
+
+/// One-sided x_hi: the right boundary is clamped and reflected; the left tail
+/// is deliberately free to extend past data_min (< 0.2, possibly below 0.0).
+/// Use with_x_range(0.0, 1.0) when you need both sides clamped.
+#[test]
+fn test_density_x_hi_only() {
+    outdir();
+    let data: Vec<f64> = (20..100).map(|i| i as f64 * 0.01).collect(); // [0.2, 0.99]
+    let dp = DensityPlot::new()
+        .with_data(data)
+        .with_x_hi(1.0);
+    let plot = Plot::Density(dp);
+    let ((x_min, x_max), _) = plot.bounds().unwrap();
+    assert_eq!(x_max, 1.0, "x_hi should clamp x_max to exactly 1.0");
+    assert!(x_min < 0.2, "left tail should still extend past data_min (one-sided bound)");
+
+    let plots = vec![plot];
+    let layout = Layout::auto_from_plots(&plots);
+    let svg = render_svg(plots, layout);
+    fs::write("test_outputs/density_x_hi_only.svg", &svg).unwrap();
+    assert!(!svg.contains("NaN"));
+    assert!(svg.contains("<path"));
+}
+
+/// Bimodal bounded data: identity scores with peaks at 0.1 and 0.9.
+/// With x_range(0.0, 1.0), neither peak should bleed past the boundaries.
+#[test]
+fn test_density_bounded_bimodal_identity_scores() {
+    outdir();
+    let mut data: Vec<f64> = (0..40).map(|i| 0.05 + i as f64 * 0.005).collect(); // near 0
+    data.extend((0..40).map(|i| 0.85 + i as f64 * 0.005));                        // near 1
+    let dp = DensityPlot::new()
+        .with_data(data)
+        .with_x_range(0.0, 1.0)
+        .with_filled(true)
+        .with_color("steelblue");
+    let plot = Plot::Density(dp);
+    let ((x_min, x_max), _) = plot.bounds().unwrap();
+    assert_eq!(x_min, 0.0);
+    assert_eq!(x_max, 1.0);
+
+    let plots = vec![plot];
+    let layout = Layout::auto_from_plots(&plots);
+    let svg = render_svg(plots, layout);
+    fs::write("test_outputs/density_bounded_bimodal.svg", &svg).unwrap();
+    assert!(!svg.contains("NaN"));
+    assert!(svg.contains("<path"));
+}

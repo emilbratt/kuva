@@ -41,11 +41,13 @@ pub struct DensityPlot {
     pub line_dash: Option<String>,
     /// Pre-smoothed (x, y) curve; bypasses KDE when set.
     pub precomputed: Option<(Vec<f64>, Vec<f64>)>,
-    /// Clamp KDE evaluation to this x range. Useful for bounded data (e.g.
-    /// methylation β-values or frequencies in [0, 1]) where the default
-    /// behaviour of extending 3×bandwidth beyond the data extremes produces a
-    /// curve that bleeds into physically impossible negative values.
-    pub x_range: Option<(f64, f64)>,
+    /// Lower bound for KDE evaluation. When set, boundary reflection is applied
+    /// at `x_lo` so the curve terminates smoothly rather than bleeding into
+    /// physically impossible values (e.g. negative identity scores).
+    pub x_lo: Option<f64>,
+    /// Upper bound for KDE evaluation. When set, boundary reflection is applied
+    /// at `x_hi` so the curve terminates smoothly at the upper limit.
+    pub x_hi: Option<f64>,
 }
 
 impl Default for DensityPlot {
@@ -69,7 +71,8 @@ impl DensityPlot {
             legend_label: None,
             line_dash: None,
             precomputed: None,
-            x_range: None,
+            x_lo: None,
+            x_hi: None,
         }
     }
 
@@ -160,16 +163,37 @@ impl DensityPlot {
         self
     }
 
-    /// Clamp the KDE evaluation range to `[lo, hi]`.
+    /// Set both the lower and upper KDE evaluation bounds.
     ///
-    /// By default the KDE is evaluated from `data_min - 3×bandwidth` to
-    /// `data_max + 3×bandwidth` so the Gaussian tails taper smoothly. For
-    /// data that is physically bounded (e.g. methylation β-values or
-    /// frequencies in `[0, 1]`) this produces a curve that extends into
-    /// impossible negative values. Setting `with_x_range(0.0, 1.0)` prevents
-    /// that and gives a cleaner result.
+    /// Equivalent to calling `.with_x_lo(lo).with_x_hi(hi)`. Boundary
+    /// reflection is applied at both ends so the curve terminates smoothly
+    /// rather than bleeding into physically impossible values.
+    ///
+    /// For data bounded in `[0, 1]` (identity scores, methylation β-values,
+    /// frequencies) use `with_x_range(0.0, 1.0)`.
     pub fn with_x_range(mut self, lo: f64, hi: f64) -> Self {
-        self.x_range = Some((lo, hi));
+        self.x_lo = Some(lo);
+        self.x_hi = Some(hi);
+        self
+    }
+
+    /// Set the lower KDE evaluation bound and apply boundary reflection there.
+    ///
+    /// Use when only the lower bound is known (e.g. scores that cannot be
+    /// negative but have no upper cap). The right tail still extends
+    /// `3×bandwidth` past the data maximum.
+    pub fn with_x_lo(mut self, lo: f64) -> Self {
+        self.x_lo = Some(lo);
+        self
+    }
+
+    /// Set the upper KDE evaluation bound and apply boundary reflection there.
+    ///
+    /// Use when only the upper bound is known (e.g. percentages that cannot
+    /// exceed 100 but have no enforced minimum). The left tail still extends
+    /// `3×bandwidth` past the data minimum.
+    pub fn with_x_hi(mut self, hi: f64) -> Self {
+        self.x_hi = Some(hi);
         self
     }
 }

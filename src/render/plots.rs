@@ -498,18 +498,21 @@ impl Plot {
                 }
                 if dp.data.len() < 2 { return None; }
                 let bw = dp.bandwidth.unwrap_or_else(|| render_utils::silverman_bandwidth(&dp.data));
-                let (x_min, x_max) = dp.x_range.unwrap_or_else(|| {
-                    let lo = dp.data.iter().cloned().fold(f64::INFINITY, f64::min) - 3.0 * bw;
-                    let hi = dp.data.iter().cloned().fold(f64::NEG_INFINITY, f64::max) + 3.0 * bw;
-                    (lo, hi)
-                });
-                // Use the same sample count as the renderer so we don't miss
-                // a sharp peak and underestimate y_max, which would clip the curve.
-                let curve = render_utils::simple_kde(&dp.data, bw, dp.kde_samples);
+                let data_min = dp.data.iter().cloned().fold(f64::INFINITY, f64::min);
+                let data_max = dp.data.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let x_min = dp.x_lo.unwrap_or(data_min - 3.0 * bw);
+                let x_max = dp.x_hi.unwrap_or(data_max + 3.0 * bw);
+                // Use the same KDE path as the renderer (including reflection) so
+                // bounds() and the rendered curve agree on the peak y value.
                 let n = dp.data.len() as f64;
                 let norm = 1.0 / (n * bw * (2.0 * std::f64::consts::PI).sqrt());
+                let curve = if dp.x_lo.is_some() || dp.x_hi.is_some() {
+                    render_utils::simple_kde_reflect(&dp.data, bw, dp.kde_samples,
+                        x_min, x_max, dp.x_lo.is_some(), dp.x_hi.is_some())
+                } else {
+                    render_utils::simple_kde(&dp.data, bw, dp.kde_samples)
+                };
                 let y_max_pdf = curve.iter()
-                    .filter(|(x, _)| *x >= x_min && *x <= x_max)
                     .map(|(_, y)| y * norm)
                     .fold(0.0_f64, f64::max);
                 Some(((x_min, x_max), (0.0, y_max_pdf * 1.1)))

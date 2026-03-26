@@ -47,6 +47,9 @@ impl Clone for TickFormat {
 
 impl TickFormat {
     pub fn format(&self, v: f64) -> String {
+        // IEEE 754 negative zero (-0.0 == 0.0 but formats as "-0"). Normalise
+        // it to positive zero so no formatter can produce "-0" on a tick label.
+        let v = if v == 0.0 { 0.0 } else { v };
         match self {
             Self::Auto      => tick_format_auto(v),
             Self::Fixed(n)  => format!("{:.*}", n, v),

@@ -2802,7 +2802,7 @@ pub fn render_brickplot(brickplot: &BrickPlot, layout: &Layout) -> Scene {
 }
 
 fn add_density(dp: &DensityPlot, computed: &ComputedLayout, scene: &mut Scene) {
-    use render_utils::{silverman_bandwidth, simple_kde};
+    use render_utils::{silverman_bandwidth, simple_kde, simple_kde_reflect};
 
     // Determine the (x, y) curve points
     let curve: Vec<(f64, f64)> = if let Some((xs, ys)) = &dp.precomputed {
@@ -2810,18 +2810,25 @@ fn add_density(dp: &DensityPlot, computed: &ComputedLayout, scene: &mut Scene) {
     } else {
         if dp.data.len() < 2 { return; }
         let bw = dp.bandwidth.unwrap_or_else(|| silverman_bandwidth(&dp.data));
-        let raw = simple_kde(&dp.data, bw, dp.kde_samples);
-        // Normalise raw KDE sums to probability density
         let n = dp.data.len() as f64;
         let norm = 1.0 / (n * bw * (2.0 * std::f64::consts::PI).sqrt());
-        let iter = raw.into_iter().map(|(x, y)| (x, y * norm));
-        // Clamp to x_range if set (prevents curve from bleeding outside bounded
-        // domains such as [0, 1] for methylation / frequency data).
-        if let Some((lo, hi)) = dp.x_range {
-            iter.filter(|(x, _)| *x >= lo && *x <= hi).collect()
+
+        let raw = if dp.x_lo.is_some() || dp.x_hi.is_some() {
+            // Bounded evaluation with boundary reflection. For any active bound,
+            // data points near that boundary are mirrored across it so the curve
+            // terminates smoothly rather than cutting off mid-peak. Normalising
+            // by the original n preserves the density integral over [lo, hi].
+            let data_min = dp.data.iter().cloned().fold(f64::INFINITY, f64::min);
+            let data_max = dp.data.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let lo = dp.x_lo.unwrap_or(data_min - 3.0 * bw);
+            let hi = dp.x_hi.unwrap_or(data_max + 3.0 * bw);
+            simple_kde_reflect(&dp.data, bw, dp.kde_samples, lo, hi,
+                dp.x_lo.is_some(), dp.x_hi.is_some())
         } else {
-            iter.collect()
-        }
+            simple_kde(&dp.data, bw, dp.kde_samples)
+        };
+
+        raw.into_iter().map(|(x, y)| (x, y * norm)).collect()
     };
 
     if curve.is_empty() { return; }
