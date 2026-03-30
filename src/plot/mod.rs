@@ -27,6 +27,7 @@ pub mod density;
 pub mod ridgeline;
 pub mod polar;
 pub mod ternary;
+pub mod diceplot;
 
 pub mod legend;
 
@@ -61,5 +62,6 @@ pub use density::DensityPlot;
 pub use ridgeline::{RidgelinePlot, RidgelineGroup};
 pub use polar::{PolarPlot, PolarSeries, PolarMode};
 pub use ternary::{TernaryPlot, TernaryPoint};
+pub use diceplot::{DicePlot, DicePoint};
 
 pub use legend::{Legend, LegendEntry, LegendShape, LegendPosition, LegendGroup};

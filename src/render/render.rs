@@ -37,6 +37,7 @@ use crate::plot::density::DensityPlot;
 use crate::plot::ridgeline::RidgelinePlot;
 use crate::plot::polar::{PolarPlot, PolarMode};
 use crate::plot::ternary::TernaryPlot;
+use crate::plot::diceplot::DicePlot;
 
 use crate::plot::Legend;
 use crate::plot::legend::{ColorBarInfo, LegendEntry, LegendGroup, LegendPosition, LegendShape};
@@ -1700,6 +1701,63 @@ fn render_legend_entry(entry: &LegendEntry, scene: &mut Scene, legend_x: f64, cu
     }
 }
 
+/// Like [`add_legend`] but places the legend box at an explicit y coordinate
+/// for stacking multiple legend sections vertically (used by DicePlot).
+fn add_legend_at(legend: &Legend, scene: &mut Scene, computed: &ComputedLayout, y_start: f64) {
+    let theme = &computed.theme;
+    let legend_width = computed.legend_width;
+    let legend_padding = computed.legend_padding;
+    let line_height = computed.legend_line_height;
+    let legend_height = legend.entries.len() as f64 * line_height + legend_padding * 2.0;
+    let legend_x = computed.width - computed.margin_right + computed.y2_axis_width + 10.0;
+    let legend_y = y_start;
+
+    if legend.show_box {
+        scene.add(Primitive::Rect {
+            x: legend_x - legend_padding + 5.0, y: legend_y - legend_padding,
+            width: legend_width, height: legend_height,
+            fill: Color::from(&theme.legend_bg), stroke: None, stroke_width: None, opacity: None,
+        });
+        scene.add(Primitive::Rect {
+            x: legend_x - legend_padding + 5.0, y: legend_y - legend_padding,
+            width: legend_width, height: legend_height,
+            fill: "none".into(), stroke: Some(Color::from(&theme.legend_border)),
+            stroke_width: Some(1.0), opacity: None,
+        });
+    }
+
+    let mut cur_y = legend_y;
+    for entry in &legend.entries {
+        let swatch_x = legend_x;
+        let swatch_y = cur_y;
+        match entry.shape {
+            LegendShape::Circle | LegendShape::CircleSize(_) => {
+                let r = if let LegendShape::CircleSize(r) = entry.shape { r } else { 5.0 };
+                scene.add(Primitive::Circle {
+                    cx: swatch_x + 5.0, cy: swatch_y + line_height / 2.0 - 2.0,
+                    r, fill: entry.color.clone().into(),
+                    fill_opacity: None,
+                    stroke: None,
+                    stroke_width: None,
+                });
+            }
+            _ => {
+                scene.add(Primitive::Rect {
+                    x: swatch_x, y: swatch_y,
+                    width: 12.0, height: 12.0,
+                    fill: entry.color.clone().into(), stroke: None, stroke_width: None, opacity: None,
+                });
+            }
+        }
+        scene.add(Primitive::Text {
+            x: swatch_x + 18.0, y: swatch_y + computed.body_size as f64 * 0.8,
+            content: entry.label.clone(), size: computed.body_size,
+            anchor: TextAnchor::Start, rotate: None, bold: false,
+        });
+        cur_y += line_height;
+    }
+}
+
 fn add_legend(legend: &Legend, scene: &mut Scene, computed: &ComputedLayout) {
     let theme = &computed.theme;
 
@@ -2752,6 +2810,384 @@ fn add_dot_plot(dp: &DotPlot, scene: &mut Scene, computed: &ComputedLayout) {
     }
 }
 
+fn add_diceplot(dp: &DicePlot, scene: &mut Scene, computed: &ComputedLayout) {
+    const EPSILON: f64 = f64::EPSILON;
+
+    let n_x = dp.x_categories.len();
+    let n_y = dp.y_categories.len();
+    if n_x == 0 || n_y == 0 { return; }
+
+    let cell_w = computed.plot_width()  / n_x as f64;
+    let cell_h = computed.plot_height() / n_y as f64;
+    let tile_w = cell_w * dp.cell_width;
+    let tile_h = cell_h * dp.cell_height;
+    let offsets = dp.dot_offsets();
+
+    let categorical_mode = dp.points.iter().any(|p| !p.dot_colors.is_empty());
+    let per_dot_mode = !categorical_mode && dp.points.iter().any(|p| !p.dot_fills.is_empty());
+    let pip_scale = 0.75_f64;
+
+    // ggdiceplot 1.2.0 pip sizing: compute max radius from inter-pip distance
+    // and border clearance, then apply pip_scale.
+    let min_half_tile = (tile_w / 2.0).min(tile_h / 2.0);
+
+    // Offsets are fractional (-0.3..+0.3 range), scale to pixel space
+    let px_offsets: Vec<(f64, f64)> = offsets.iter()
+        .map(|&(dx, dy)| (dx * cell_w, dy * cell_h))
+        .collect();
+
+    let (min_inter_pip, max_abs_offset) = if px_offsets.len() > 1 {
+        let mut min_dist = f64::INFINITY;
+        for i in 0..px_offsets.len() {
+            for j in (i + 1)..px_offsets.len() {
+                let d = ((px_offsets[i].0 - px_offsets[j].0).powi(2)
+                       + (px_offsets[i].1 - px_offsets[j].1).powi(2)).sqrt();
+                min_dist = min_dist.min(d);
+            }
+        }
+        let max_off = px_offsets.iter()
+            .map(|(dx, dy)| dx.abs().max(dy.abs()))
+            .fold(0.0_f64, f64::max);
+        (min_dist, max_off)
+    } else {
+        (f64::INFINITY, 0.0)
+    };
+
+    let s_tight = if min_inter_pip.is_finite() && max_abs_offset > 0.0 {
+        (min_half_tile / (max_abs_offset + min_inter_pip / 2.0)).min(1.0)
+    } else {
+        1.0
+    };
+
+    let pip_radius_tight = {
+        let border_r = min_half_tile - max_abs_offset * s_tight;
+        let inter_r = if min_inter_pip.is_finite() {
+            min_inter_pip * s_tight / 2.0
+        } else {
+            min_half_tile
+        };
+        border_r.min(inter_r)
+    };
+
+    let offset_scale = if s_tight < 1.0 {
+        1.0 - pip_scale * (1.0 - s_tight)
+    } else {
+        1.0
+    };
+
+    let has_size = dp.points.iter().any(|p| p.size.is_some())
+        || dp.points.iter().any(|p| p.dot_sizes.iter().any(|v| v.is_some()));
+
+    let base_r = if dp.dot_radius > 0.0 {
+        dp.dot_radius
+    } else if has_size {
+        // Variable size: max radius is pip_scale fraction of tight radius
+        pip_radius_tight * pip_scale
+    } else {
+        // Constant size: all pips at pip_scale fraction of tight radius
+        pip_radius_tight * pip_scale
+    };
+
+    let has_fill = dp.points.iter().any(|p| p.fill.is_some());
+    let (fill_min, fill_max) = dp.fill_range.unwrap_or_else(|| dp.fill_extent());
+    let (size_min, size_max) = dp.size_range.unwrap_or_else(|| dp.size_extent());
+
+    for pt in &dp.points {
+        let xi = dp.x_categories.iter().position(|c| c == &pt.x_cat);
+        let yi = dp.y_categories.iter().position(|c| c == &pt.y_cat);
+        let (xi, yi) = match (xi, yi) {
+            (Some(xi), Some(yi)) => (xi, yi),
+            _ => continue,
+        };
+
+        let cx = computed.map_x(xi as f64 + 1.0);
+        let cy = computed.map_y((n_y - yi) as f64);
+
+        let (tile_fill, tile_stroke, tile_stroke_w): (Color, Option<Color>, Option<f64>) = if categorical_mode || per_dot_mode {
+            ("#ffffff".into(), Some("#000000".into()), Some(0.8_f64))
+        } else if has_fill {
+            let color: Color = if let Some(v) = pt.fill {
+                let norm = (v - fill_min) / (fill_max - fill_min + EPSILON);
+                dp.color_map.map(norm.clamp(0.0, 1.0)).into()
+            } else {
+                "#e8e8e8".into()
+            };
+            (color, Some("#cccccc".into()), Some(0.5_f64))
+        } else {
+            ("#e8e8e8".into(), Some("#cccccc".into()), Some(0.5_f64))
+        };
+
+        scene.add(Primitive::Rect {
+            x: cx - tile_w / 2.0,
+            y: cy - tile_h / 2.0,
+            width: tile_w,
+            height: tile_h,
+            fill: tile_fill,
+            stroke: tile_stroke,
+            stroke_width: tile_stroke_w,
+            opacity: None,
+        });
+
+        let cell_dot_r = if has_size && !categorical_mode && !per_dot_mode {
+            if let Some(s) = pt.size {
+                let norm = (s - size_min) / (size_max - size_min + EPSILON);
+                base_r * (0.25 + 0.75 * norm.clamp(0.0, 1.0))
+            } else {
+                base_r * 0.25
+            }
+        } else {
+            base_r
+        };
+
+        for k in 0..dp.ndots {
+            let (dx, dy) = match offsets.get(k) {
+                Some(&o) => o,
+                None => continue,
+            };
+            // Apply offset_scale: shift pips toward tile center so they don't clip
+            let dot_cx = cx + dx * cell_w * offset_scale;
+            let dot_cy = cy + dy * cell_h * offset_scale;
+
+            if categorical_mode {
+                if let Some(color) = pt.dot_colors.get(k).and_then(|c| c.as_deref()) {
+                    scene.add(Primitive::Circle {
+                        cx: dot_cx, cy: dot_cy, r: cell_dot_r,
+                        fill: color.into(),
+                        fill_opacity: None,
+                        stroke: None,
+                        stroke_width: None,
+                    });
+                }
+            } else if per_dot_mode {
+                if let Some(fill_v) = pt.dot_fills.get(k).and_then(|v| *v) {
+                    let fill_norm = (fill_v - fill_min) / (fill_max - fill_min + EPSILON);
+                    let fill_color: Color = dp.color_map.map(fill_norm.clamp(0.0, 1.0)).into();
+                    let dot_r = if let Some(size_v) = pt.dot_sizes.get(k).and_then(|v| *v) {
+                        let size_norm = (size_v - size_min) / (size_max - size_min + EPSILON);
+                        base_r * (0.25 + 0.75 * size_norm.clamp(0.0, 1.0))
+                    } else {
+                        base_r * 0.25
+                    };
+                    scene.add(Primitive::Circle {
+                        cx: dot_cx, cy: dot_cy, r: dot_r,
+                        fill: fill_color,
+                        fill_opacity: None,
+                        stroke: None,
+                        stroke_width: None,
+                    });
+                }
+            } else if pt.present.contains(&k) {
+                scene.add(Primitive::Circle {
+                    cx: dot_cx, cy: dot_cy, r: cell_dot_r,
+                    fill: "#222222".into(),
+                    fill_opacity: None,
+                    stroke: None,
+                    stroke_width: None,
+                });
+            } else {
+                let r = cell_dot_r * 0.6;
+                let d = format!(
+                    "M {},{} A {},{} 0 1,0 {},{} A {},{} 0 1,0 {},{} Z",
+                    dot_cx - r, dot_cy,
+                    r, r, dot_cx + r, dot_cy,
+                    r, r, dot_cx - r, dot_cy,
+                );
+                scene.add(Primitive::Path(Box::new(PathData {
+                    d,
+                    fill: Some("none".into()),
+                    stroke: "#999999".into(),
+                    stroke_width: 0.8,
+                    opacity: Some(0.6),
+                    stroke_dasharray: None,
+                })));
+            }
+        }
+    }
+}
+
+fn add_dice_position_legend(
+    dp: &DicePlot, title: &str, scene: &mut Scene,
+    computed: &ComputedLayout, y_start: f64,
+) -> f64 {
+    let theme = &computed.theme;
+    let legend_padding = 10.0;
+    let line_height = computed.legend_line_height;
+    let legend_width = computed.legend_width;
+    let legend_x = computed.width - computed.margin_right + computed.y2_axis_width + 10.0;
+
+    let mini_w = 18.0_f64;
+    let mini_h = 18.0_f64;
+    let scale_x = mini_w / dp.cell_width.max(0.01);
+    let scale_y = mini_h / dp.cell_height.max(0.01);
+    let mini_r = (dp.pad * mini_w / dp.cell_width * 0.8).clamp(1.5, 4.0);
+    let offsets = dp.dot_offsets();
+
+    let title_rows = 1_usize;
+    let box_height = (title_rows + dp.ndots) as f64 * line_height + legend_padding * 2.0;
+
+    scene.add(Primitive::Rect {
+        x: legend_x - legend_padding + 5.0, y: y_start - legend_padding,
+        width: legend_width, height: box_height,
+        fill: Color::from(&theme.legend_bg), stroke: None, stroke_width: None, opacity: None,
+    });
+    scene.add(Primitive::Rect {
+        x: legend_x - legend_padding + 5.0, y: y_start - legend_padding,
+        width: legend_width, height: box_height,
+        fill: "none".into(), stroke: Some(Color::from(&theme.legend_border)),
+        stroke_width: Some(1.0), opacity: None,
+    });
+    scene.add(Primitive::Text {
+        x: legend_x + legend_width * 0.5 - legend_padding,
+        y: y_start + computed.body_size as f64 * 0.8,
+        content: title.to_string(), size: computed.body_size,
+        anchor: TextAnchor::Middle, rotate: None, bold: true,
+    });
+
+    let mut row_y = y_start + line_height;
+    for k in 0..dp.ndots {
+        let mini_cx = legend_x + 5.0 + mini_w * 0.5 + 2.0;
+        let mini_cy = row_y + line_height * 0.5 - 2.0;
+
+        scene.add(Primitive::Rect {
+            x: mini_cx - mini_w * 0.5, y: mini_cy - mini_h * 0.5,
+            width: mini_w, height: mini_h,
+            fill: "#ffffff".into(), stroke: Some("#000000".into()),
+            stroke_width: Some(0.5), opacity: None,
+        });
+
+        for j in 0..dp.ndots {
+            let (dx, dy) = match offsets.get(j) { Some(&o) => o, None => continue };
+            let dot_cx = mini_cx + dx * scale_x;
+            let dot_cy = mini_cy + dy * scale_y;
+            if j == k {
+                scene.add(Primitive::Circle { cx: dot_cx, cy: dot_cy, r: mini_r, fill: "#000000".into(), fill_opacity: None, stroke: None, stroke_width: None });
+            } else {
+                scene.add(Primitive::Circle { cx: dot_cx, cy: dot_cy, r: mini_r * 0.65, fill: "#cccccc".into(), fill_opacity: None, stroke: None, stroke_width: None });
+            }
+        }
+
+        let label = dp.category_labels.get(k).map(|s| s.as_str()).unwrap_or("");
+        scene.add(Primitive::Text {
+            x: legend_x + 5.0 + mini_w + 7.0,
+            y: mini_cy + computed.body_size as f64 / 3.0,
+            content: label.to_string(), size: computed.body_size,
+            anchor: TextAnchor::Start, rotate: None, bold: false,
+        });
+        row_y += line_height;
+    }
+    y_start + box_height
+}
+
+fn add_dice_size_legend_section(
+    dp: &DicePlot, title: &str, scene: &mut Scene,
+    computed: &ComputedLayout, y_start: f64,
+) -> f64 {
+    let theme = &computed.theme;
+    let legend_padding = 10.0;
+    let line_height = computed.legend_line_height;
+    let legend_width = computed.legend_width;
+    let legend_x = computed.width - computed.margin_right + computed.y2_axis_width + 10.0;
+
+    let (size_min, size_max) = dp.size_range.unwrap_or_else(|| dp.size_extent());
+    let n_rows = 3_usize;
+    let pcts: [f64; 3] = [0.25, 0.50, 1.0];
+    let box_height = (1 + n_rows) as f64 * line_height + legend_padding * 2.0;
+
+    scene.add(Primitive::Rect {
+        x: legend_x - legend_padding + 5.0, y: y_start - legend_padding,
+        width: legend_width, height: box_height,
+        fill: Color::from(&theme.legend_bg), stroke: None, stroke_width: None, opacity: None,
+    });
+    scene.add(Primitive::Rect {
+        x: legend_x - legend_padding + 5.0, y: y_start - legend_padding,
+        width: legend_width, height: box_height,
+        fill: "none".into(), stroke: Some(Color::from(&theme.legend_border)),
+        stroke_width: Some(1.0), opacity: None,
+    });
+    scene.add(Primitive::Text {
+        x: legend_x + legend_width * 0.5 - legend_padding,
+        y: y_start + computed.body_size as f64 * 0.8,
+        content: title.to_string(), size: computed.body_size,
+        anchor: TextAnchor::Middle, rotate: None, bold: true,
+    });
+
+    let cell_w = computed.plot_width()  / dp.x_categories.len().max(1) as f64;
+    let cell_h = computed.plot_height() / dp.y_categories.len().max(1) as f64;
+    let tile_w  = cell_w * dp.cell_width;
+    let tile_h  = cell_h * dp.cell_height;
+    let pip_scale = 0.75_f64;
+    let min_half_tile = (tile_w / 2.0).min(tile_h / 2.0);
+    let px_offsets: Vec<(f64, f64)> = dp.dot_offsets().iter()
+        .map(|&(dx, dy)| (dx * cell_w, dy * cell_h)).collect();
+    let (min_inter_pip, max_abs_offset) = if px_offsets.len() > 1 {
+        let mut min_d = f64::INFINITY;
+        for i in 0..px_offsets.len() {
+            for j in (i+1)..px_offsets.len() {
+                let d = ((px_offsets[i].0 - px_offsets[j].0).powi(2)
+                       + (px_offsets[i].1 - px_offsets[j].1).powi(2)).sqrt();
+                min_d = min_d.min(d);
+            }
+        }
+        let max_off = px_offsets.iter().map(|(dx, dy)| dx.abs().max(dy.abs())).fold(0.0_f64, f64::max);
+        (min_d, max_off)
+    } else { (f64::INFINITY, 0.0) };
+    let s_tight = if min_inter_pip.is_finite() && max_abs_offset > 0.0 {
+        (min_half_tile / (max_abs_offset + min_inter_pip / 2.0)).min(1.0)
+    } else { 1.0 };
+    let pip_r_tight = (min_half_tile - max_abs_offset * s_tight)
+        .min(if min_inter_pip.is_finite() { min_inter_pip * s_tight / 2.0 } else { min_half_tile });
+    let base_r = if dp.dot_radius > 0.0 { dp.dot_radius } else { pip_r_tight * pip_scale };
+
+    let swatch_cx = legend_x + 5.0 + 10.0;
+    let mut row_y = y_start + line_height;
+    for &pct in &pcts {
+        let r = (base_r * (0.25 + 0.75 * pct)).clamp(2.0, 8.0);
+        let circle_cy = row_y + line_height * 0.5 - 2.0;
+        scene.add(Primitive::Circle { cx: swatch_cx, cy: circle_cy, r, fill: "#444444".into(), fill_opacity: None, stroke: None, stroke_width: None });
+        let value = size_min + pct * (size_max - size_min);
+        scene.add(Primitive::Text {
+            x: swatch_cx + 14.0, y: circle_cy + computed.body_size as f64 / 3.0,
+            content: format!("{:.1}", value), size: computed.body_size,
+            anchor: TextAnchor::Start, rotate: None, bold: false,
+        });
+        row_y += line_height;
+    }
+    y_start + box_height
+}
+
+fn add_dice_legends(dp: &DicePlot, scene: &mut Scene, computed: &ComputedLayout) {
+    let mut y = computed.margin_top;
+
+    if let Some(ref title) = dp.position_legend_label {
+        y = add_dice_position_legend(dp, title, scene, computed, y);
+        y += 8.0;
+    }
+
+    if !dp.dot_legend.is_empty() {
+        let entries: Vec<LegendEntry> = dp.dot_legend.iter().map(|(label, color)| {
+            LegendEntry {
+                label: label.clone(),
+                color: color.clone(),
+                shape: LegendShape::Circle,
+                dasharray: None,
+            }
+        }).collect();
+        let legend = Legend {
+            title: None,
+            entries,
+            groups: None,
+            position: computed.legend_position,
+            show_box: true,
+        };
+        add_legend_at(&legend, scene, computed, y);
+        y += legend.entries.len() as f64 * computed.legend_line_height + 28.0;
+    }
+
+    if let Some(ref title) = dp.size_legend_label {
+        add_dice_size_legend_section(dp, title, scene, computed, y);
+    }
+}
+
 /// Draw DotPlot size legend (top) and colorbar (bottom) stacked in the same right-margin column.
 fn add_dot_stacked_legends(
     size_title: &str,
@@ -3277,6 +3713,16 @@ pub fn collect_legend_entries(plots: &[Plot]) -> Vec<LegendEntry> {
                             dasharray: None,
                         });
                     }
+                }
+            }
+            Plot::DicePlot(dp) => {
+                for (label, color) in &dp.dot_legend {
+                    entries.push(LegendEntry {
+                        label: label.clone(),
+                        color: color.clone(),
+                        shape: LegendShape::Circle,
+                        dasharray: None,
+                    });
                 }
             }
             _ => {}
@@ -4795,6 +5241,9 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
             Plot::Ternary(tp) => {
                 add_ternary(tp, &mut scene, &computed);
             }
+            Plot::DicePlot(d) => {
+                add_diceplot(d, &mut scene, &computed);
+            }
         }
     }
 
@@ -4827,23 +5276,51 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
         let title = dp.size_label.as_deref().unwrap_or("");
         add_dot_stacked_legends(title, &size_entries, &info, &mut scene, &computed);
     } else {
-        let (entries, groups) = if let Some(ref grps) = layout.legend_groups {
-            (Vec::new(), Some(grps.clone()))
+        // Check if any DicePlot has its own stacked legend (position + colour sections).
+        let dice_has_legend = plots.iter().any(|p| {
+            if let Plot::DicePlot(dp) = p {
+                dp.position_legend_label.is_some()
+                    || !dp.dot_legend.is_empty()
+                    || dp.size_legend_label.is_some()
+            } else {
+                false
+            }
+        });
+
+        if dice_has_legend {
+            if layout.show_legend {
+                for plot in plots.iter() {
+                    if let Plot::DicePlot(dp) = plot {
+                        if dp.position_legend_label.is_some()
+                            || !dp.dot_legend.is_empty()
+                            || dp.size_legend_label.is_some()
+                        {
+                            add_dice_legends(dp, &mut scene, &computed);
+                            break;
+                        }
+                    }
+                }
+            }
         } else {
-            let e = layout.legend_entries.clone()
-                .unwrap_or_else(|| collect_legend_entries(&plots));
-            (e, None)
-        };
-        if layout.show_legend && (!entries.is_empty() || groups.is_some()) {
-            let legend = Legend {
-                title: layout.legend_title.clone(),
-                entries,
-                groups,
-                position: layout.legend_position,
-                show_box: layout.legend_box,
+            let (entries, groups) = if let Some(ref grps) = layout.legend_groups {
+                (Vec::new(), Some(grps.clone()))
+            } else {
+                let e = layout.legend_entries.clone()
+                    .unwrap_or_else(|| collect_legend_entries(&plots));
+                (e, None)
             };
-            add_legend(&legend, &mut scene, &computed);
+            if layout.show_legend && (!entries.is_empty() || groups.is_some()) {
+                let legend = Legend {
+                    title: layout.legend_title.clone(),
+                    entries,
+                    groups,
+                    position: layout.legend_position,
+                    show_box: layout.legend_box,
+                };
+                add_legend(&legend, &mut scene, &computed);
+            }
         }
+
         if layout.show_colorbar {
             for plot in plots.iter() {
                 if let Some(info) = plot.colorbar_info() {

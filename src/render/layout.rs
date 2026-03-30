@@ -432,6 +432,34 @@ impl Layout {
                 }
             }
 
+            if let Plot::DicePlot(dp) = plot {
+                x_labels = Some(dp.x_categories.clone());
+                // Reverse so y_cat[0] appears at the TOP
+                y_labels = Some(dp.y_categories.iter().rev().cloned().collect());
+                if dp.fill_legend_label.is_some() {
+                    has_colorbar = true;
+                }
+                if !dp.dot_legend.is_empty() {
+                    has_legend = true;
+                    for (label, _) in &dp.dot_legend {
+                        max_label_len = max_label_len.max(label.len());
+                    }
+                }
+                if dp.position_legend_label.is_some() {
+                    has_legend = true;
+                    for label in &dp.category_labels {
+                        max_label_len = max_label_len.max(label.len());
+                    }
+                }
+                if dp.size_legend_label.is_some() {
+                    has_legend = true;
+                    max_label_len = max_label_len.max(5);
+                }
+                for label in &dp.y_categories {
+                    max_label_len = max_label_len.max(label.len());
+                }
+            }
+
             if let Plot::Candlestick(cp) = plot {
                 let continuous = cp.candles.iter().any(|c| c.x.is_some());
                 if !continuous {

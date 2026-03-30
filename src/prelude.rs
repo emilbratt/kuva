@@ -67,6 +67,8 @@ pub use crate::plot::{
     PolarMode,
     TernaryPlot,
     TernaryPoint,
+    DicePlot,
+    DicePoint,
     // Style / config types used when building plots
     MarkerShape,
     LineStyle,
