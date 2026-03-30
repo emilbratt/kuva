@@ -23,6 +23,7 @@
 - [Strip Plot](./plots/strip.md)
 - [Waterfall Chart](./plots/waterfall.md)
 - [Dot Plot](./plots/dotplot.md)
+- [Dice Plot](./plots/diceplot.md)
 - [Stacked Area Plot](./plots/stacked_area.md)
 - [Candlestick Plot](./plots/candlestick.md)
 - [Contour Plot](./plots/contour.md)
