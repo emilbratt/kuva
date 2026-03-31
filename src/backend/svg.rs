@@ -277,7 +277,7 @@ impl SvgBackend {
                     svg.push_str("<g");
                     // Only add class="tt" from title if extra_attrs doesn't already supply a class.
                     let extra_has_class = extra_attrs.as_ref()
-                        .map_or(false, |a| a.contains("class="));
+                        .is_some_and(|a| a.contains("class="));
                     if title.is_some() && !extra_has_class {
                         svg.push_str(r#" class="tt""#);
                     }
