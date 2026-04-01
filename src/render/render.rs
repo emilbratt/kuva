@@ -2581,29 +2581,7 @@ fn add_manhattan(mp: &ManhattanPlot, scene: &mut Scene, computed: &ComputedLayou
         }
     }
 
-    // 4. Chromosome labels in the bottom margin.
-    // Skip bands that are too narrow to fit a label (e.g., MT at genome scale is ~0 px).
-    let label_y = computed.height - computed.margin_bottom + 5.0 + computed.tick_size as f64;
-    let min_label_px = 6.0_f64; // below this the band is invisible; anything above gets a label
-    for span in &mp.spans {
-        let band_px = (computed.map_x(span.x_end) - computed.map_x(span.x_start)).abs();
-        let mid_x = computed.map_x((span.x_start + span.x_end) / 2.0);
-        if mid_x >= plot_left && mid_x <= plot_right && band_px >= min_label_px {
-            let (anchor, rotate) = match computed.x_tick_rotate {
-                Some(angle) => (TextAnchor::End, Some(angle)),
-                None        => (TextAnchor::Middle, None),
-            };
-            scene.add(Primitive::Text {
-                x: mid_x,
-                y: label_y,
-                content: span.name.clone(),
-                size: computed.tick_size,
-                anchor,
-                rotate,
-                bold: false,
-            });
-        }
-    }
+    // 4. Chromosome labels — drawn by add_manhattan_chr_labels (called after ClipEnd).
 
     // 5. Top-hit labels
     if mp.label_top == 0 {
@@ -2707,6 +2685,35 @@ pub fn render_volcano(vp: &VolcanoPlot, layout: &Layout) -> Scene {
     scene
 }
 
+/// Draw chromosome name labels below the plot area.
+/// Must be called OUTSIDE any active clip-path group, since labels sit below
+/// the data-area boundary and would otherwise be invisible.
+fn add_manhattan_chr_labels(mp: &ManhattanPlot, scene: &mut Scene, computed: &ComputedLayout) {
+    let plot_left  = computed.margin_left;
+    let plot_right = computed.width - computed.margin_right;
+    let label_y = computed.height - computed.margin_bottom + 5.0 + computed.tick_size as f64;
+    let min_label_px = 6.0_f64;
+    for span in &mp.spans {
+        let band_px = (computed.map_x(span.x_end) - computed.map_x(span.x_start)).abs();
+        let mid_x = computed.map_x((span.x_start + span.x_end) / 2.0);
+        if mid_x >= plot_left && mid_x <= plot_right && band_px >= min_label_px {
+            let (anchor, rotate) = match computed.x_tick_rotate {
+                Some(angle) => (TextAnchor::End, Some(angle)),
+                None        => (TextAnchor::Middle, None),
+            };
+            scene.add(Primitive::Text {
+                x: mid_x,
+                y: label_y,
+                content: span.name.clone(),
+                size: computed.tick_size,
+                anchor,
+                rotate,
+                bold: false,
+            });
+        }
+    }
+}
+
 pub fn render_manhattan(mp: &ManhattanPlot, layout: &Layout) -> Scene {
     let computed = ComputedLayout::from_layout(layout);
     let mut scene = Scene::new(computed.width, computed.height);
@@ -2716,6 +2723,7 @@ pub fn render_manhattan(mp: &ManhattanPlot, layout: &Layout) -> Scene {
     add_labels_and_title(&mut scene, &computed, layout);
     add_shaded_regions(&layout.shaded_regions, &mut scene, &computed);
     add_manhattan(mp, &mut scene, &computed);
+    add_manhattan_chr_labels(mp, &mut scene, &computed);
     add_reference_lines(&layout.reference_lines, &mut scene, &computed);
     add_text_annotations(&layout.annotations, &mut scene, &computed);
     scene
@@ -5393,6 +5401,13 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
 
     if !skip_axes {
         scene.elements.push(Primitive::ClipEnd);
+    }
+
+    // Manhattan chromosome labels must be drawn after ClipEnd (they sit below the clip rect)
+    for plot in plots.iter() {
+        if let Plot::Manhattan(m) = plot {
+            add_manhattan_chr_labels(m, &mut scene, &computed);
+        }
     }
 
     // Check for DotPlot stacked legend (size legend + colorbar in one column)
