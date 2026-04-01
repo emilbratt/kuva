@@ -17,7 +17,11 @@ The file below is a single `.svg`. No server, no network requests, no external d
     c.style.height = Math.round(600 * s) + 'px';
   }
   scale();
-  window.addEventListener('resize', scale);
+  if (window.ResizeObserver) {
+    new ResizeObserver(scale).observe(c);
+  } else {
+    window.addEventListener('resize', scale);
+  }
 })();
 </script>
 
