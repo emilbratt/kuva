@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.6] — 2026-04-01
 
+- **`DicePlot`** — new plot type: a grid of cells where each cell shows up to 6 dots in a canonical die-face layout. Ports rendering logic from the [ggdiceplot](https://github.com/maflot/ggdiceplot) R package (v1.2.0). Three input modes: categorical (`with_records`), continuous tile (`with_points`), and per-dot continuous (`with_dot_data`) for ZEBRA-style domino plots. Pip sizing uses the ggdiceplot 1.2.0 tight-packing algorithm with `pip_scale = 0.75` and offset shrinkage. Legend support: spatial-position legend (mini die faces), categorical colour legend, and size legend sections. Column-major grid positions match `make_offsets()`.
+- **Custom X/Theta-Tick-Labels for `PolarPlot`** — Re-uses `with_x_tick_format()` for theta axis on `PolarPlot`. Introduces new default `TickFormat::Degree` for `PolarPlot`, so default behavior is unchanged. 
 ### Fixed
 
 - **docs.rs build** — `doom` feature build script no longer attempts to write to the source directory or access the network when building on docs.rs. Empty placeholder files are written to `OUT_DIR` instead so `include_bytes!` compiles cleanly.

@@ -137,6 +137,12 @@ Click any image to go to the full documentation page.
 <div class="gallery-desc">Size and colour encoding on a categorical grid — common in single-cell analysis.</div>
 </a></div>
 
+<div class="gallery-card"><a href="./plots/diceplot.html">
+<img src="./assets/diceplot/mirna_compound.svg" alt="Dice Plot">
+<div class="gallery-caption">Dice Plot</div>
+<div class="gallery-desc">Die-face dot layout per grid cell — multivariate categorical and continuous data (port of ggdiceplot).</div>
+</a></div>
+
 <div class="gallery-card"><a href="./plots/contour.html">
 <img src="./assets/contour/filled.svg" alt="Contour Plot">
 <div class="gallery-caption">Contour Plot</div>
