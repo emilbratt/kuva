@@ -20,6 +20,7 @@
 - [Violin Plot](./plots/violin.md)
 - [Pie Chart](./plots/pie.md)
 - [Heatmap](./plots/heatmap.md)
+- [Clustermap](./plots/clustermap.md)
 - [Strip Plot](./plots/strip.md)
 - [Waterfall Chart](./plots/waterfall.md)
 - [Dot Plot](./plots/dotplot.md)
