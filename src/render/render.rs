@@ -2129,8 +2129,9 @@ fn apply_normalization(data: Vec<Vec<f64>>, norm: &ClustermapNorm) -> Vec<Vec<f6
     }
 }
 
-/// Draw a rectangular-style cladogram dendrogram hanging leftward from the
+/// Draw a rectangular-style phylogram dendrogram hanging leftward from the
 /// heatmap (row dendrogram). Root is at the far left, leaves touch the heatmap.
+/// Node x-positions are proportional to accumulated branch lengths (UPGMA distances).
 #[allow(clippy::too_many_arguments)]
 fn draw_row_dendrogram(
     nodes: &[crate::plot::phylo::PhyloNode],
@@ -2164,31 +2165,41 @@ fn draw_row_dendrogram(
     let n_leaves = leaf_counter;
     if n_leaves == 0 { return; }
 
-    // Cladogram depth (0 at root, max at leaves)
-    let mut subtree_depth = vec![0usize; n_nodes];
-    for &id in &post_order {
-        if nodes[id].children.is_empty() {
-            subtree_depth[id] = 0;
-        } else {
-            subtree_depth[id] = nodes[id].children.iter()
-                .map(|&c| subtree_depth[c] + 1)
-                .max().unwrap_or(0);
+    // Phylogram: accumulated branch lengths from root (root=0, leaves=max_dist)
+    let mut acc_dist = vec![0.0f64; n_nodes];
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        for &c in &nodes[id].children {
+            acc_dist[c] = acc_dist[id] + nodes[c].branch_length;
+            stack.push(c);
         }
     }
-    let max_depth = subtree_depth[root];
-    if max_depth == 0 { return; }
-    let max_depth_f = max_depth as f64;
+    // Equal-stem spacing: rank INTERNAL nodes by unique acc_dist, evenly spaced
+    // from 0 to just-before-1.0. Leaves always sit at 1.0 (touching heatmap).
+    // This prevents zero-branch-length internal nodes from collapsing onto the
+    // leaf edge (which happens when all merges in a subtree occur at distance 0).
+    let mut internal_unique: Vec<f64> = (0..n_nodes)
+        .filter(|&id| !nodes[id].children.is_empty())
+        .map(|id| acc_dist[id])
+        .collect();
+    internal_unique.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    internal_unique.dedup_by(|a, b| (*a - *b).abs() < 1e-10);
+    let n_int = internal_unique.len();
+    if n_int == 0 { return; }
 
     let row_dend_draw_w = (row_dend_w - 10.0).max(1.0);
     let color = Color::from(branch_color);
 
-    // px: root at left (ml), leaves at right (hm_x)
-    // depth[i] = max_depth - subtree_depth[i]  →  leaf=max_depth, root=0
-    // px[i] = ml + d_frac * row_dend_draw_w + (hm_x - ml - row_dend_draw_w)
-    //       = hm_x - row_dend_draw_w + d_frac * row_dend_draw_w
+    // px: root at left edge, leaves at right edge; internal nodes evenly between
     let px = |id: usize| -> f64 {
-        let depth_i = (max_depth - subtree_depth[id]) as f64;
-        let d_frac = depth_i / max_depth_f;
+        let d_frac = if nodes[id].children.is_empty() {
+            1.0
+        } else {
+            let rank = internal_unique.iter()
+                .position(|&u| (u - acc_dist[id]).abs() < 1e-10)
+                .unwrap_or(0);
+            rank as f64 / n_int as f64
+        };
         hm_x - row_dend_draw_w + d_frac * row_dend_draw_w
     };
     let py = |id: usize| -> f64 {
@@ -2224,8 +2235,9 @@ fn draw_row_dendrogram(
     }
 }
 
-/// Draw a rectangular-style cladogram dendrogram hanging downward from the
+/// Draw a rectangular-style phylogram dendrogram hanging downward from the
 /// top margin (column dendrogram). Root is at top, leaves touch the heatmap.
+/// Node y-positions are proportional to accumulated branch lengths (UPGMA distances).
 #[allow(clippy::too_many_arguments)]
 fn draw_col_dendrogram(
     nodes: &[crate::plot::phylo::PhyloNode],
@@ -2258,30 +2270,39 @@ fn draw_col_dendrogram(
     let n_leaves = leaf_counter;
     if n_leaves == 0 { return; }
 
-    // Cladogram depth
-    let mut subtree_depth = vec![0usize; n_nodes];
-    for &id in &post_order {
-        if nodes[id].children.is_empty() {
-            subtree_depth[id] = 0;
-        } else {
-            subtree_depth[id] = nodes[id].children.iter()
-                .map(|&c| subtree_depth[c] + 1)
-                .max().unwrap_or(0);
+    // Phylogram: accumulated branch lengths from root (root=0, leaves=max_dist)
+    let mut acc_dist = vec![0.0f64; n_nodes];
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        for &c in &nodes[id].children {
+            acc_dist[c] = acc_dist[id] + nodes[c].branch_length;
+            stack.push(c);
         }
     }
-    let max_depth = subtree_depth[root];
-    if max_depth == 0 { return; }
-    let max_depth_f = max_depth as f64;
+    // Equal-stem spacing: rank INTERNAL nodes by unique acc_dist, evenly spaced
+    // from 0 to just-before-1.0. Leaves always sit at 1.0 (touching heatmap).
+    let mut internal_unique: Vec<f64> = (0..n_nodes)
+        .filter(|&id| !nodes[id].children.is_empty())
+        .map(|id| acc_dist[id])
+        .collect();
+    internal_unique.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    internal_unique.dedup_by(|a, b| (*a - *b).abs() < 1e-10);
+    let n_int = internal_unique.len();
+    if n_int == 0 { return; }
 
     let col_dend_draw_h = (col_dend_h - 5.0).max(1.0);
     let color = Color::from(branch_color);
 
-    // py: root at top (mt + 5), leaves at bottom (mt + col_dend_h).
-    // depth_i = max_depth for leaves (d_frac=1 → py = mt + col_dend_h)
-    // depth_i = 0       for root  (d_frac=0 → py = mt + 5)
+    // py: root at top, leaves at bottom; internal nodes evenly between
     let py = |id: usize| -> f64 {
-        let depth_i = (max_depth - subtree_depth[id]) as f64;
-        let d_frac = depth_i / max_depth_f;
+        let d_frac = if nodes[id].children.is_empty() {
+            1.0
+        } else {
+            let rank = internal_unique.iter()
+                .position(|&u| (u - acc_dist[id]).abs() < 1e-10)
+                .unwrap_or(0);
+            rank as f64 / n_int as f64
+        };
         mt + 5.0 + d_frac * col_dend_draw_h
     };
     let px = |id: usize| -> f64 {

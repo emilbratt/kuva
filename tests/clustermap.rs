@@ -301,3 +301,34 @@ fn test_clustermap_values_overlay() {
     let layout = Layout::auto_from_plots(&plots).with_title("Clustermap Values Overlay");
     write_svg("clustermap_values_overlay", plots, layout);
 }
+
+/// Regression test for issue #59: nodes that merged at the same UPGMA distance
+/// must appear at the same x-position in the dendrogram. The 5×5 matrix below
+/// has A, D, E all pairwise-equidistant at 1.0, so they should merge at the
+/// same level in the row dendrogram.
+#[test]
+fn test_clustermap_equal_distance_dendrogram() {
+    // Distance matrix where A↔D = A↔E = D↔E = 1.0 (all three equidistant)
+    // B and C are closer to each other (0.5) and far from A/D/E (3.0+)
+    let data = vec![
+        // A: high col1
+        vec![5.0, 0.1, 0.1, 0.1, 0.1],
+        // B: high col2+col3
+        vec![0.1, 4.0, 4.0, 0.1, 0.1],
+        // C: high col2+col3 (similar to B)
+        vec![0.1, 3.9, 4.1, 0.1, 0.1],
+        // D: high col1 (same profile as A)
+        vec![5.0, 0.1, 0.1, 0.1, 0.1],
+        // E: high col1 (same profile as A)
+        vec![5.0, 0.1, 0.1, 0.1, 0.1],
+    ];
+    let cm = Clustermap::new()
+        .with_data(data)
+        .with_row_labels(["A", "B", "C", "D", "E"])
+        .with_col_labels(["c1", "c2", "c3", "c4", "c5"])
+        .with_legend("Value");
+    let plots = vec![Plot::Clustermap(cm)];
+    let layout = Layout::auto_from_plots(&plots)
+        .with_title("Equal-distance dendrogram (issue #59)");
+    write_svg("clustermap_equal_distance", plots, layout);
+}

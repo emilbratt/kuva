@@ -13,6 +13,7 @@ EXAMPLES=(
     brick
     candlestick
     chord
+    clustermap
     contour
     density
     diceplot
