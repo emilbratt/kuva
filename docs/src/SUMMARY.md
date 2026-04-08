@@ -23,6 +23,7 @@
 - [Clustermap](./plots/clustermap.md)
 - [Joint Plot](./plots/jointplot.md)
 - [Strip Plot](./plots/strip.md)
+- [Raincloud Plot](./plots/raincloud.md)
 - [Waterfall Chart](./plots/waterfall.md)
 - [Dot Plot](./plots/dotplot.md)
 - [Dice Plot](./plots/diceplot.md)

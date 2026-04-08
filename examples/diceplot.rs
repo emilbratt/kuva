@@ -6,7 +6,7 @@
 //! cargo run --example diceplot
 //! ```
 //!
-//! SVGs are written to `test_outputs/diceplot/`.
+//! SVGs are written to `docs/src/assets/diceplot/`.
 
 use std::sync::Arc;
 use kuva::plot::diceplot::DicePlot;
@@ -16,7 +16,7 @@ use kuva::render::render::render_multiple;
 use kuva::render::layout::Layout;
 use kuva::render::plots::Plot;
 
-const OUT: &str = "test_outputs/diceplot";
+const OUT: &str = "docs/src/assets/diceplot";
 
 /// ggdiceplot's diverging colour scale: #40004B (purple) → white → #00441B (green).
 /// Matches `scale_fill_gradient2(low="#40004B", high="#00441B", mid="white")`.
@@ -43,7 +43,7 @@ fn ggdiceplot_diverging() -> ColorMap {
 }
 
 fn main() {
-    std::fs::create_dir_all(OUT).expect("could not create output dir");
+    std::fs::create_dir_all(OUT).expect("could not create docs/src/assets/diceplot");
 
     mirna_compound();
     oral_microbiome();

@@ -4447,7 +4447,9 @@ fn add_dice_legends(dp: &DicePlot, scene: &mut Scene, computed: &ComputedLayout)
         y += 8.0;
     }
 
-    // Colorbar (fill legend) — drawn below the other dice legends
+    // Colorbar (fill legend) — drawn below the other dice legends when there is enough
+    // vertical room, or beside them (starting at margin_top) when the remaining height
+    // would make the bar too short to be useful.
     if dp.fill_legend_label.is_some() {
         let (fill_min, fill_max) = dp.fill_range.unwrap_or_else(|| dp.fill_extent());
         let cmap = dp.color_map.clone();
@@ -4462,8 +4464,18 @@ fn add_dice_legends(dp: &DicePlot, scene: &mut Scene, computed: &ComputedLayout)
             tick_labels: None,
         };
         let bar_x = computed.width - computed.colorbar_x_inset;
-        let bar_height = (computed.height - y - 8.0 - 20.0).max(60.0);
-        add_colorbar_at(&info, scene, computed, bar_x, y + 8.0, bar_height);
+        // If the remaining height after stacking the other legend boxes is less than
+        // 120px, place the colorbar beside them (same y-start as the legend stack)
+        // rather than below them. The two columns are already at different x positions
+        // within the right margin so they don't overlap.
+        let available_below = computed.height - y - 28.0;
+        let bar_y = if available_below < 120.0 {
+            computed.margin_top + 8.0
+        } else {
+            y + 8.0
+        };
+        let bar_height = (computed.height - bar_y - 20.0).max(60.0);
+        add_colorbar_at(&info, scene, computed, bar_x, bar_y, bar_height);
         return true;
     }
 

@@ -15,6 +15,7 @@ EXAMPLES=(
     chord
     contour
     density
+    diceplot
     forest
     ridgeline
     dotplot
@@ -39,6 +40,7 @@ EXAMPLES=(
     volcano
     waterfall
     polar
+    raincloud
     ternary
     twin_y
     all_plots_simple
