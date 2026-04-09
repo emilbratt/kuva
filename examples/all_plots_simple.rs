@@ -1,4 +1,4 @@
-//! Compact showcase of all 30 kuva plot types in a single 6×5 Figure grid.
+//! Compact showcase of all 37 kuva plot types in an 8×5 Figure grid.
 //! Each cell uses minimal inline data — click through to all_plots_complex
 //! for larger datasets with axes, legends, and titles.
 //!
@@ -14,6 +14,9 @@ use kuva::plot::{
     DotPlot, VolcanoPlot, ManhattanPlot, CandlestickPlot, ContourPlot,
     UpSetPlot, ChordPlot, SankeyPlot, PhyloTree, SyntenyPlot, BrickPlot,
     DensityPlot, RidgelinePlot, PolarPlot, PolarMode, TernaryPlot, ForestPlot,
+    RocPlot, RocGroup,
+    DicePlot, RaincloudPlot, LollipopPlot, SurvivalPlot, Clustermap,
+    JointPlot,
 };
 use kuva::plot::brick::BrickTemplate;
 use kuva::render::plots::Plot;
@@ -322,7 +325,81 @@ fn main() {
         .with_row("Study D",  1.28, 0.90, 1.75)
         .with_row("Meta",     0.94, 0.74, 1.14);
 
-    // ── Assemble 6×5 Figure (row-major, 30 cells) ─────────────────────────
+    // ── Row 6: ROC ────────────────────────────────────────────────────────
+
+    // 30: ROC — single classifier, deterministic logistic quantile dataset
+    fn logistic_dataset(n: usize, mu: f64, scale: f64) -> Vec<(f64, bool)> {
+        let mut data = Vec::with_capacity(2 * n);
+        for i in 1..=n {
+            let p = i as f64 / (n + 1) as f64;
+            let logit = (p / (1.0 - p)).ln();
+            let pos = 1.0 / (1.0 + (-(mu + scale * logit)).exp());
+            let neg = 1.0 / (1.0 + (-(-mu + scale * logit)).exp());
+            data.push((pos, true));
+            data.push((neg, false));
+        }
+        data
+    }
+    let roc = RocPlot::new()
+        .with_group(RocGroup::new("Classifier").with_raw(logistic_dataset(60, 1.0, 0.5)));
+
+    // ── Row 6: Roc, DicePlot, Raincloud, Lollipop, Survival ──────────────
+
+    // 31: DicePlot — categorical mode, 2 x-cats × 2 y-cats, 4 dot positions
+    let dice = DicePlot::new(4)
+        .with_points([
+            ("X1", "G1", vec![0, 2], None, None),
+            ("X2", "G1", vec![1, 3], None, None),
+            ("X1", "G2", vec![0, 1], None, None),
+            ("X2", "G2", vec![2, 3], None, None),
+        ]);
+
+    // 32: Raincloud (2 groups, 15 values each)
+    let raincloud = RaincloudPlot::new()
+        .with_group("A", (0..15).map(|i| 2.0 + i as f64 * 0.4).collect())
+        .with_group("B", (0..15).map(|i| 4.5 + i as f64 * 0.3).collect());
+
+    // 33: Lollipop — 6 mutations along a gene body
+    let lollipop = LollipopPlot::new()
+        .with_point(1.0, 3.5)
+        .with_point(2.0, -1.2)
+        .with_point(3.0, 4.1)
+        .with_point(4.0, -2.3)
+        .with_point(5.0, 1.8)
+        .with_point(6.0, 3.0);
+
+    // 34: Survival — 2 groups
+    let survival = SurvivalPlot::new()
+        .with_group("Control",
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 9.0, 11.0, 14.0, 18.0],
+            vec![true, true, false, true, false, true, false, true, false, false])
+        .with_group("Treatment",
+            vec![2.0, 4.0, 6.0, 8.0, 12.0, 16.0, 20.0, 24.0, 28.0, 32.0],
+            vec![false, true, false, true, false, false, true, false, false, false]);
+
+    // ── Row 7: Clustermap, JointPlot ──────────────────────────────────────
+
+    // 35: Clustermap — 4×4 correlation-like matrix with 2-block structure
+    let clustermap = Clustermap::new()
+        .with_data(vec![
+            vec![0.9_f64, 0.8, 0.1, 0.2],
+            vec![0.8_f64, 0.9, 0.2, 0.1],
+            vec![0.1_f64, 0.2, 0.9, 0.8],
+            vec![0.2_f64, 0.1, 0.8, 0.9],
+        ])
+        .with_row_labels(["r1", "r2", "r3", "r4"])
+        .with_col_labels(["c1", "c2", "c3", "c4"]);
+
+    // 36: JointPlot — scatter with top and right marginals
+    let joint = JointPlot::new()
+        .with_xy(
+            (0..20).map(|i| i as f64 * 0.3),
+            (0..20).map(|i| (i as f64 * 0.3).sin() + i as f64 * 0.1),
+        )
+        .with_x_label("x")
+        .with_y_label("y");
+
+    // ── Assemble 8×5 Figure (row-major, 36 cells + 4 spare) ───────────────
 
     let all_plots: Vec<Vec<Plot>> = vec![
         // Row 0
@@ -361,6 +438,15 @@ fn main() {
         vec![Plot::Polar(polar)],
         vec![Plot::Ternary(ternary)],
         vec![Plot::Forest(forest)],
+        // Row 6
+        vec![Plot::Roc(roc)],
+        vec![Plot::DicePlot(dice)],
+        vec![Plot::Raincloud(raincloud)],
+        vec![Plot::Lollipop(lollipop)],
+        vec![Plot::Survival(survival)],
+        // Row 7
+        vec![Plot::Clustermap(clustermap)],
+        vec![Plot::Joint(joint)],
     ];
 
     // Auto-compute one Layout per cell before moving all_plots into Figure
@@ -368,7 +454,7 @@ fn main() {
         .map(|cell| Layout::auto_from_plots(cell))
         .collect();
 
-    let fig = Figure::new(6, 5)
+    let fig = Figure::new(8, 5)
         .with_cell_size(500.0, 380.0)
         .with_plots(all_plots)
         .with_layouts(layouts);

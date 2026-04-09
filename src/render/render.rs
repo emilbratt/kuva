@@ -5633,6 +5633,25 @@ pub fn collect_legend_entries(plots: &[Plot]) -> Vec<LegendEntry> {
                     }
                 }
             }
+            Plot::Joint(jp) => {
+                use crate::render::palette::Palette;
+                let cat10 = Palette::category10();
+                for (gi, group) in jp.groups.iter().enumerate() {
+                    if let Some(ref lbl) = group.scatter.legend_label {
+                        let color = if group.scatter.color == "black" && group.scatter.colors.is_none() {
+                            cat10[gi % cat10.len()].to_string()
+                        } else {
+                            group.scatter.color.clone()
+                        };
+                        entries.push(LegendEntry {
+                            label: lbl.clone(),
+                            color,
+                            shape: LegendShape::Marker(group.scatter.marker),
+                            dasharray: None,
+                        });
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -7143,7 +7162,7 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
         let skip_axes_for_meta = plots.iter().all(|p| matches!(p,
             Plot::Pie(_) | Plot::UpSet(_) | Plot::Chord(_) | Plot::Sankey(_)
             | Plot::PhyloTree(_) | Plot::Synteny(_) | Plot::Polar(_) | Plot::Ternary(_)
-            | Plot::Clustermap(_)));
+            | Plot::Clustermap(_) | Plot::Joint(_)));
         if !skip_axes_for_meta {
             scene.axis_meta = Some(AxisMeta {
                 x_min: computed.x_range.0,
@@ -7160,7 +7179,7 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
         }
     }
 
-    let skip_axes = plots.iter().all(|p| matches!(p, Plot::Pie(_) | Plot::UpSet(_) | Plot::Chord(_) | Plot::Sankey(_) | Plot::PhyloTree(_) | Plot::Synteny(_) | Plot::Polar(_) | Plot::Ternary(_) | Plot::DicePlot(_) | Plot::Clustermap(_)));
+    let skip_axes = plots.iter().all(|p| matches!(p, Plot::Pie(_) | Plot::UpSet(_) | Plot::Chord(_) | Plot::Sankey(_) | Plot::PhyloTree(_) | Plot::Synteny(_) | Plot::Polar(_) | Plot::Ternary(_) | Plot::DicePlot(_) | Plot::Clustermap(_) | Plot::Joint(_)));
     if !skip_axes {
         add_axes_and_grid(&mut scene, &computed, &layout);
     }
@@ -7351,6 +7370,9 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
             }
             Plot::Clustermap(c) => {
                 add_clustermap(c, &mut scene, &computed);
+            }
+            Plot::Joint(jp) => {
+                add_jointplot(jp, &mut scene, &computed, 0.0, computed.legend_width, layout.show_legend);
             }
             Plot::Raincloud(r) => {
                 add_raincloud(r, &mut scene, &computed);
@@ -8850,61 +8872,40 @@ fn joint_draw_right_marginal(
     });
 }
 
-/// Render a scatter plot with marginal distribution panels on the top and/or right edges.
+/// Inner drawing routine for `JointPlot` — populates an existing `scene` using
+/// `computed.width` / `computed.height` as the total canvas and `title_offset_y`
+/// as vertical space already consumed by a title drawn outside this call.
 ///
-/// # Example
-/// ```rust,no_run
-/// use kuva::prelude::*;
-/// let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-/// let y = vec![2.0, 3.5, 2.5, 4.0, 3.0];
-/// let joint = JointPlot::new()
-///     .with_xy(x, y)
-///     .with_x_label("Feature A")
-///     .with_y_label("Feature B");
-/// let layout = Layout::new((0.5, 5.5), (1.5, 4.5)).with_title("Joint Plot");
-/// let scene = render_jointplot(joint, layout);
-/// ```
-pub fn render_jointplot(jp: crate::plot::jointplot::JointPlot, layout: Layout) -> Scene {
+/// Used by both `render_jointplot` (standalone) and the `render_multiple`
+/// dispatch for `Plot::Joint` (Figure grids).
+fn add_jointplot(
+    jp: &crate::plot::jointplot::JointPlot,
+    scene: &mut Scene,
+    computed: &ComputedLayout,
+    title_offset_y: f64,
+    legend_width: f64,
+    show_legend: bool,
+) {
     use crate::render::palette::Palette;
 
-    let width  = layout.width.unwrap_or(500.0);
-    let height = layout.height.unwrap_or(500.0);
-    let title_h = if layout.title.is_some() { 35.0_f64 } else { 0.0 };
+    let width  = computed.width;
+    let height = computed.height;
 
     let top_h     = if jp.show_top   { jp.marginal_size } else { 0.0 };
     let right_w   = if jp.show_right { jp.marginal_size } else { 0.0 };
     let top_gap   = if jp.show_top   { jp.marginal_gap  } else { 0.0 };
     let right_gap = if jp.show_right { jp.marginal_gap  } else { 0.0 };
 
-    // Scatter panel occupies bottom-left of available space.
-    // The right marginal panel is placed at the right edge of the scatter data area
-    // (not the scatter sub-canvas edge) so the scatter margin_right never creates
-    // white space between the plot and the marginal.
     let scatter_canvas_w = width  - right_w - right_gap;
-    let scatter_canvas_h = height - title_h - top_h - top_gap;
-    let scatter_offset_y = title_h + top_h + top_gap;
+    let scatter_canvas_h = height - title_offset_y - top_h - top_gap;
+    let scatter_offset_y = title_offset_y + top_h + top_gap;
 
-    // Compute data ranges
     let (x_min, x_max) = jp.x_range();
     let (y_min, y_max) = jp.y_range();
 
-    // Build scatter sub-plots directly from each group's ScatterPlot.
-    // Apply a palette-derived default color to any group that has none set.
     let has_legend = jp.groups.iter().any(|g| g.scatter.legend_label.is_some());
-
-    // When there is a right marginal AND a legend, the legend must appear to the right
-    // of the marginal panel (not inside the scatter sub-scene's margin_right, which
-    // would put it between the data area and the panel).  We suppress the legend from
-    // the scatter sub-layout and draw it manually in the master scene after the panel.
-    // In that case the total scene width is expanded to accommodate the legend.
-    let legend_in_scatter = (layout.show_legend || has_legend) && !jp.show_right;
+    let legend_in_scatter = (show_legend || has_legend) && !jp.show_right;
     let legend_after_right = has_legend && jp.show_right;
-    let legend_extra_w = if legend_after_right {
-        layout.legend_width + 20.0
-    } else {
-        0.0
-    };
-    let scene_width = width + legend_extra_w;
 
     let scatter_plots: Vec<Plot> = jp.groups.iter().enumerate().map(|(gi, g)| {
         let mut sp = g.scatter.clone();
@@ -8914,61 +8915,21 @@ pub fn render_jointplot(jp: crate::plot::jointplot::JointPlot, layout: Layout) -
         Plot::Scatter(sp)
     }).collect();
 
-    // Helper closure to build the scatter sub-layout (Layout is not Clone,
-    // so we build it twice: once to compute pixel geometry, once for render_multiple).
     let build_scatter_layout = || {
         let mut sl = Layout::new((x_min, x_max), (y_min, y_max))
             .with_width(scatter_canvas_w)
             .with_height(scatter_canvas_h)
-            .with_theme(layout.theme.clone());
+            .with_theme(computed.theme.clone());
         if let Some(ref xl) = jp.x_label { sl = sl.with_x_label(xl.clone()); }
         if let Some(ref yl) = jp.y_label { sl = sl.with_y_label(yl.clone()); }
-        // Legend lives in the scatter sub-scene only when there is no right marginal.
         if legend_in_scatter { sl.show_legend = true; }
-        sl.legend_position = layout.legend_position;
-        // Propagate log axes
-        if layout.log_x { sl = sl.with_log_x(); }
-        if layout.log_y { sl = sl.with_log_y(); }
-        // Propagate explicit axis bounds
-        if let Some(v) = layout.x_axis_min { sl = sl.with_x_axis_min(v); }
-        if let Some(v) = layout.x_axis_max { sl = sl.with_x_axis_max(v); }
-        if let Some(v) = layout.y_axis_min { sl = sl.with_y_axis_min(v); }
-        if let Some(v) = layout.y_axis_max { sl = sl.with_y_axis_max(v); }
-        // Propagate interactivity
-        if layout.interactive { sl = sl.with_interactive(); }
-        // Propagate annotations / reference lines / shaded regions
-        for ann in &layout.annotations { sl = sl.with_annotation(ann.clone()); }
-        for rl in &layout.reference_lines { sl = sl.with_reference_line(rl.clone()); }
-        for sr in &layout.shaded_regions { sl = sl.with_shaded_region(sr.clone()); }
         sl
     };
 
     let scatter_computed = ComputedLayout::from_layout(&build_scatter_layout());
     let scatter_scene = render_multiple(scatter_plots, build_scatter_layout());
 
-    // Right edge of scatter data area in master-scene x-coords (scatter_offset_x = 0).
     let data_right = scatter_computed.margin_left + scatter_computed.plot_width();
-
-    // Build master scene (potentially wider than `width` when legend follows the panel).
-    let mut scene = Scene::new(scene_width, height);
-    if let Some(ref font) = layout.font_family {
-        scene.font_family = Some(font.clone());
-    }
-    scene.background_color = Some(layout.theme.background.clone());
-    scene.text_color = Some(layout.theme.text_color.clone());
-
-    // Title
-    if let Some(ref t) = layout.title {
-        scene.add(Primitive::Text {
-            x: scene_width / 2.0,
-            y: title_h * 0.7,
-            content: t.clone(),
-            size: layout.title_size,
-            anchor: TextAnchor::Middle,
-            rotate: None,
-            bold: false,
-        });
-    }
 
     // Insert scatter sub-scene via SVG translate group
     scene.add(Primitive::GroupStart {
@@ -8979,7 +8940,6 @@ pub fn render_jointplot(jp: crate::plot::jointplot::JointPlot, layout: Layout) -
     for elem in scatter_scene.elements {
         scene.elements.push(elem);
     }
-    // Copy defs from scatter sub-scene (tooltips etc)
     for def in scatter_scene.defs {
         scene.defs.push(def);
     }
@@ -8987,21 +8947,16 @@ pub fn render_jointplot(jp: crate::plot::jointplot::JointPlot, layout: Layout) -
 
     // Top marginal panel
     if jp.show_top {
-        let panel_bottom = scatter_offset_y; // bottom of top panel = top of scatter
-        joint_draw_top_marginal(&jp, &scatter_computed, panel_bottom, top_h, &mut scene);
+        let panel_bottom = scatter_offset_y;
+        joint_draw_top_marginal(jp, &scatter_computed, panel_bottom, top_h, scene);
     }
 
-    // Right marginal panel: starts immediately after the scatter data area's right edge.
-    // Using data_right (not scatter_canvas_w) eliminates the gap caused by the scatter
-    // sub-scene's margin_right.
+    // Right marginal panel
     if jp.show_right {
         let panel_left = data_right + right_gap;
-        joint_draw_right_marginal(
-            &jp, &scatter_computed, scatter_offset_y, panel_left, right_w, &mut scene,
-        );
+        joint_draw_right_marginal(jp, &scatter_computed, scatter_offset_y, panel_left, right_w, scene);
 
-        // Draw the legend to the right of the marginal panel when it was suppressed
-        // from the scatter sub-scene.
+        // Draw legend to the right of the marginal panel when suppressed from scatter sub-scene
         if legend_after_right {
             let legend_x = panel_left + right_w + 10.0;
             let line_h   = scatter_computed.legend_line_height;
@@ -9024,17 +8979,19 @@ pub fn render_jointplot(jp: crate::plot::jointplot::JointPlot, layout: Layout) -
 
             if !entries.is_empty() {
                 let box_h = entries.len() as f64 * line_h + pad * 2.0;
+                let legend_bg = &computed.theme.legend_bg;
+                let legend_border = &computed.theme.legend_border;
                 scene.add(Primitive::Rect {
                     x: legend_x - pad + 5.0, y: cur_y - pad,
-                    width: layout.legend_width, height: box_h,
-                    fill: Color::from(&*layout.theme.legend_bg),
+                    width: legend_width, height: box_h,
+                    fill: Color::from(&**legend_bg),
                     stroke: None, stroke_width: None, opacity: None,
                 });
                 scene.add(Primitive::Rect {
                     x: legend_x - pad + 5.0, y: cur_y - pad,
-                    width: layout.legend_width, height: box_h,
+                    width: legend_width, height: box_h,
                     fill: "none".into(),
-                    stroke: Some(Color::from(&*layout.theme.legend_border)),
+                    stroke: Some(Color::from(&**legend_border)),
                     stroke_width: Some(1.0), opacity: None,
                 });
                 for (lbl, col) in entries {
@@ -9053,6 +9010,64 @@ pub fn render_jointplot(jp: crate::plot::jointplot::JointPlot, layout: Layout) -
             }
         }
     }
+}
+
+/// Render a scatter plot with marginal distribution panels on the top and/or right edges.
+///
+/// # Example
+/// ```rust,no_run
+/// use kuva::prelude::*;
+/// let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+/// let y = vec![2.0, 3.5, 2.5, 4.0, 3.0];
+/// let joint = JointPlot::new()
+///     .with_xy(x, y)
+///     .with_x_label("Feature A")
+///     .with_y_label("Feature B");
+/// let layout = Layout::new((0.5, 5.5), (1.5, 4.5)).with_title("Joint Plot");
+/// let scene = render_jointplot(joint, layout);
+/// ```
+pub fn render_jointplot(jp: crate::plot::jointplot::JointPlot, layout: Layout) -> Scene {
+    let width  = layout.width.unwrap_or(500.0);
+    let height = layout.height.unwrap_or(500.0);
+    let title_h = if layout.title.is_some() { 35.0_f64 } else { 0.0 };
+
+    let has_legend = jp.groups.iter().any(|g| g.scatter.legend_label.is_some());
+    let legend_after_right = has_legend && jp.show_right;
+    let legend_extra_w = if legend_after_right {
+        layout.legend_width + 20.0
+    } else {
+        0.0
+    };
+    let scene_width = width + legend_extra_w;
+
+    let mut scene = Scene::new(scene_width, height);
+    if let Some(ref font) = layout.font_family {
+        scene.font_family = Some(font.clone());
+    }
+    scene.background_color = Some(layout.theme.background.clone());
+    scene.text_color = Some(layout.theme.text_color.clone());
+
+    // Title
+    if let Some(ref t) = layout.title {
+        scene.add(Primitive::Text {
+            x: scene_width / 2.0,
+            y: title_h * 0.7,
+            content: t.clone(),
+            size: layout.title_size,
+            anchor: TextAnchor::Middle,
+            rotate: None,
+            bold: false,
+        });
+    }
+
+    // Build a ComputedLayout using width/height so add_jointplot can access theme etc.
+    let stub_layout = Layout::new((0.0, 1.0), (0.0, 1.0))
+        .with_width(width)
+        .with_height(height)
+        .with_theme(layout.theme.clone());
+    let computed = ComputedLayout::from_layout(&stub_layout);
+
+    add_jointplot(&jp, &mut scene, &computed, title_h, layout.legend_width, layout.show_legend);
 
     scene
 }

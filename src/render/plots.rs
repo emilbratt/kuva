@@ -30,6 +30,7 @@ use crate::plot::ternary::TernaryPlot;
 use crate::plot::diceplot::DicePlot;
 use crate::plot::forest::ForestPlot;
 use crate::plot::clustermap::Clustermap;
+use crate::plot::jointplot::JointPlot;
 use crate::plot::raincloud::RaincloudPlot;
 use crate::plot::lollipop::LollipopPlot;
 use crate::plot::survival::SurvivalPlot;
@@ -71,6 +72,7 @@ pub enum Plot {
     DicePlot(DicePlot),
     Forest(ForestPlot),
     Clustermap(Clustermap),
+    Joint(JointPlot),
     Raincloud(RaincloudPlot),
     Lollipop(LollipopPlot),
     Survival(SurvivalPlot),
@@ -109,6 +111,7 @@ impl From<TernaryPlot>   for Plot { fn from(p: TernaryPlot)   -> Self { Plot::Te
 impl From<DicePlot>      for Plot { fn from(p: DicePlot)      -> Self { Plot::DicePlot(p) } }
 impl From<ForestPlot>    for Plot { fn from(p: ForestPlot)    -> Self { Plot::Forest(p) } }
 impl From<Clustermap>   for Plot { fn from(p: Clustermap)   -> Self { Plot::Clustermap(p) } }
+impl From<JointPlot>    for Plot { fn from(p: JointPlot)    -> Self { Plot::Joint(p) } }
 impl From<RaincloudPlot> for Plot { fn from(p: RaincloudPlot) -> Self { Plot::Raincloud(p) } }
 impl From<LollipopPlot>  for Plot { fn from(p: LollipopPlot)  -> Self { Plot::Lollipop(p) } }
 impl From<SurvivalPlot>  for Plot { fn from(p: SurvivalPlot)  -> Self { Plot::Survival(p) } }
@@ -643,6 +646,8 @@ impl Plot {
             }
             // Pixel-space plot — returns dummy bounds so Layout gets a valid range.
             Plot::Clustermap(_) => Some(((0.0, 1.0), (0.0, 1.0))),
+            // Pixel-space composite plot; layout supplied internally via render_multiple.
+            Plot::Joint(_) => Some(((-1.0, 1.0), (-1.0, 1.0))),
             Plot::Raincloud(r) => {
                 let n = r.groups.len();
                 if n == 0 { return None; }
@@ -719,6 +724,9 @@ impl Plot {
             Plot::Clustermap(c) => {
                 let cells: usize = c.data.iter().map(|r| r.len()).sum();
                 cells + 500
+            }
+            Plot::Joint(jp) => {
+                jp.groups.iter().map(|g| g.scatter.data.len() * 3 + 200).sum::<usize>() + 100
             }
             Plot::Raincloud(r) => {
                 let total_pts: usize = r.groups.iter().map(|g| g.values.len()).sum();

@@ -102,7 +102,7 @@ fn main() {
         .with_title("Diagnostic Biomarker Comparison")
         .with_x_label("1 − Specificity")
         .with_y_label("Sensitivity")
-        .with_width(520.0)
+        .with_width(600.0)
         .with_height(440.0);
     write("biomarkers", plots, layout);
 }

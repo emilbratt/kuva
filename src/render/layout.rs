@@ -731,7 +731,7 @@ impl Layout {
 
         if has_legend {
             layout = layout.with_show_legend();
-            let dynamic_width = max_label_len as f64 * 8.5 + 35.0;
+            let dynamic_width = max_label_len as f64 * 7.2 + 35.0;
             layout.legend_width = dynamic_width.max(80.0);
 
             // Position legend die face needs 3 cells wide — ensure legend_width fits.
@@ -892,7 +892,7 @@ impl Layout {
     /// Auto-sizes `legend_width` from the longest label.
     pub fn with_legend_entries(mut self, entries: Vec<LegendEntry>) -> Self {
         let max_chars = entries.iter().map(|e| e.label.len()).max().unwrap_or(4);
-        self.legend_width = (max_chars as f64 * 8.5 + 35.0).max(80.0);
+        self.legend_width = (max_chars as f64 * 7.2 + 35.0).max(80.0);
         self.show_legend = true;
         self.legend_entries = Some(entries);
         self
@@ -937,10 +937,10 @@ impl Layout {
     pub fn with_legend_group<S: Into<String>>(mut self, title: S, entries: Vec<LegendEntry>) -> Self {
         let t = title.into();
         // Group title is start-anchored at legend_x+5; needs legend_width >= title_px + 10.
-        let needed_title = (t.len() as f64 * 8.5 + 10.0).max(80.0);
+        let needed_title = (t.len() as f64 * 7.2 + 10.0).max(80.0);
         // Entry labels start at legend_x+25 (after swatch); same formula as with_legend_entries.
         let max_entry_chars = entries.iter().map(|e| e.label.len()).max().unwrap_or(0);
-        let needed_entries = (max_entry_chars as f64 * 8.5 + 35.0).max(80.0);
+        let needed_entries = (max_entry_chars as f64 * 7.2 + 35.0).max(80.0);
         self.legend_width = self.legend_width.max(needed_title).max(needed_entries);
         self.legend_groups.get_or_insert_with(Vec::new).push(LegendGroup {
             title: t,

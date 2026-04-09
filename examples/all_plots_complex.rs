@@ -1,4 +1,4 @@
-//! Full-featured showcase of all 30 kuva plot types.
+//! Full-featured showcase of all 37 kuva plot types.
 //! Each cell uses a larger dataset and includes a title, axis labels,
 //! and a legend where applicable.
 //!
@@ -14,6 +14,9 @@ use kuva::plot::{
     DotPlot, VolcanoPlot, ManhattanPlot, CandlestickPlot, ContourPlot,
     UpSetPlot, ChordPlot, SankeyPlot, PhyloTree, SyntenyPlot, BrickPlot,
     DensityPlot, RidgelinePlot, PolarPlot, PolarMode, TernaryPlot, ForestPlot,
+    RocPlot, RocGroup,
+    DicePlot, RaincloudPlot, LollipopPlot, SurvivalPlot, Clustermap,
+    JointPlot,
 };
 use kuva::plot::brick::BrickTemplate;
 use kuva::render::plots::Plot;
@@ -497,7 +500,114 @@ fn main() {
         .with_null_value(1.0)
         .with_show_null_line(true);
 
-    // ── Assemble 6×5 Figure ────────────────────────────────────────────────
+    // ── Row 6: ROC curve — two classifiers with DeLong CI ─────────────────
+
+    fn logistic_dataset(n: usize, mu: f64, scale: f64) -> Vec<(f64, bool)> {
+        let mut data = Vec::with_capacity(2 * n);
+        for i in 1..=n {
+            let p = i as f64 / (n + 1) as f64;
+            let logit = (p / (1.0 - p)).ln();
+            let pos = 1.0 / (1.0 + (-(mu + scale * logit)).exp());
+            let neg = 1.0 / (1.0 + (-(-mu + scale * logit)).exp());
+            data.push((pos, true));
+            data.push((neg, false));
+        }
+        data
+    }
+
+    let roc = RocPlot::new()
+        .with_group(
+            RocGroup::new("Model A")
+                .with_raw(logistic_dataset(150, 1.2, 0.5))
+                .with_ci(true)
+                .with_optimal_point(),
+        )
+        .with_group(
+            RocGroup::new("Model B")
+                .with_raw(logistic_dataset(150, 0.6, 0.5))
+                .with_ci(true),
+        )
+        .with_legend("Classifier");
+
+    // ── Row 6 (cont): DicePlot, Raincloud, Lollipop, Survival ────────────
+
+    // 31: DicePlot — categorical mode with organ directions
+    let dice = DicePlot::new(4)
+        .with_category_labels(["Lung", "Liver", "Brain", "Kidney"].iter().map(|s| s.to_string()).collect())
+        .with_points([
+            ("miR-21",  "Drug A", vec![0, 1, 3], None, None),
+            ("miR-21",  "Drug B", vec![1, 2],    None, None),
+            ("miR-155", "Drug A", vec![0, 2, 3], None, None),
+            ("miR-155", "Drug B", vec![2],        None, None),
+            ("miR-34",  "Drug A", vec![0, 1, 2], None, None),
+            ("miR-34",  "Drug B", vec![0, 3],    None, None),
+        ]);
+
+    // 32: Raincloud — 3 treatment groups, gene expression style
+    let raincloud = RaincloudPlot::new()
+        .with_group("Control",   (0..20).map(|i| 4.0 + i as f64 * 0.15).collect())
+        .with_group("Low dose",  (0..20).map(|i| 5.5 + i as f64 * 0.18).collect())
+        .with_group("High dose", (0..20).map(|i| 7.2 + i as f64 * 0.12).collect());
+
+    // 33: Lollipop — mutation landscape, TP53 style with domains
+    let lollipop = LollipopPlot::new()
+        .with_domain_opacity(0.0, 2.0, Some("Transactivation"), "steelblue", 0.35)
+        .with_domain_opacity(2.0, 5.0, Some("DNA-binding"), "firebrick", 0.35)
+        .with_domain_opacity(5.0, 7.0, Some("Tetramerization"), "forestgreen", 0.35)
+        .with_colored_point(1.2,  4.0, "steelblue")
+        .with_colored_point(2.5,  7.0, "firebrick")
+        .with_colored_point(3.1,  3.0, "firebrick")
+        .with_colored_point(3.8,  5.0, "firebrick")
+        .with_colored_point(4.6,  6.0, "firebrick")
+        .with_colored_point(5.5,  2.0, "forestgreen")
+        .with_colored_point(6.2,  4.0, "forestgreen");
+
+    // 34: Survival — 3 disease stage groups
+    let survival = SurvivalPlot::new()
+        .with_group("Stage I",
+            vec![10.0, 14.0, 20.0, 26.0, 32.0, 36.0, 40.0, 44.0, 48.0, 52.0],
+            vec![false, true, false, false, true, false, false, true, false, false])
+        .with_group("Stage II",
+            vec![5.0, 8.0, 12.0, 16.0, 20.0, 24.0, 28.0, 32.0, 36.0, 40.0],
+            vec![true, true, false, true, false, true, false, false, true, false])
+        .with_group("Stage III",
+            vec![2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0],
+            vec![true, true, true, false, true, true, false, true, false, true])
+        .with_pvalue_text("log-rank p < 0.001")
+        .with_legend("Stage");
+
+    // ── Row 7: Clustermap ─────────────────────────────────────────────────
+
+    // 35: Clustermap — gene expression with 2-block structure
+    let clustermap = Clustermap::new()
+        .with_data(vec![
+            vec![0.95_f64, 0.88, 0.12, 0.08, 0.05],
+            vec![0.85_f64, 0.91, 0.15, 0.10, 0.09],
+            vec![0.10_f64, 0.13, 0.90, 0.87, 0.82],
+            vec![0.08_f64, 0.11, 0.85, 0.92, 0.88],
+            vec![0.06_f64, 0.09, 0.80, 0.84, 0.93],
+        ])
+        .with_row_labels(["GeneA", "GeneB", "GeneC", "GeneD", "GeneE"])
+        .with_col_labels(["S1", "S2", "S3", "S4", "S5"]);
+
+    // 36: JointPlot — two-group scatter with density marginals
+    let joint = JointPlot::new()
+        .with_group(
+            "Group A",
+            (0..30).map(|i| 2.0 + i as f64 * 0.08),
+            (0..30).map(|i| 2.5 + (i as f64 * 0.2).sin() * 0.8 + i as f64 * 0.05),
+            "steelblue",
+        )
+        .with_group(
+            "Group B",
+            (0..30).map(|i| 3.5 + i as f64 * 0.07),
+            (0..30).map(|i| 4.0 + (i as f64 * 0.15).cos() * 0.6 + i as f64 * 0.03),
+            "firebrick",
+        )
+        .with_x_label("Feature x")
+        .with_y_label("Feature y");
+
+    // ── Assemble 8×5 Figure ────────────────────────────────────────────────
 
     let all_plots: Vec<Vec<Plot>> = vec![
         // Row 0
@@ -536,6 +646,15 @@ fn main() {
         vec![Plot::Polar(polar)],
         vec![Plot::Ternary(ternary)],
         vec![Plot::Forest(forest)],
+        // Row 6
+        vec![Plot::Roc(roc)],
+        vec![Plot::DicePlot(dice)],
+        vec![Plot::Raincloud(raincloud)],
+        vec![Plot::Lollipop(lollipop)],
+        vec![Plot::Survival(survival)],
+        // Row 7
+        vec![Plot::Clustermap(clustermap)],
+        vec![Plot::Joint(joint)],
     ];
 
     // Build one layout per cell: auto-compute ranges, then add metadata
@@ -584,12 +703,21 @@ fn main() {
                 27 => base.with_title("Polar"),
                 28 => base.with_title("Ternary"),
                 29 => base.with_title("Forest Plot").with_x_label("Odds Ratio"),
+                30 => base.with_title("ROC Curve")
+                           .with_x_label("False Positive Rate")
+                           .with_y_label("True Positive Rate"),
+                31 => base.with_title("Dice Plot"),
+                32 => base.with_title("Raincloud").with_y_label("Expression"),
+                33 => base.with_title("Lollipop").with_x_label("Position").with_y_label("Frequency"),
+                34 => base.with_title("Survival").with_x_label("Time (months)").with_y_label("Probability"),
+                35 => base.with_title("Clustermap"),
+                36 => base.with_title("Joint Plot").with_x_label("Feature x").with_y_label("Feature y"),
                 _  => base,
             }
         })
         .collect();
 
-    let fig = Figure::new(6, 5)
+    let fig = Figure::new(8, 5)
         .with_cell_size(600.0, 460.0)
         .with_plots(all_plots)
         .with_layouts(layouts);
