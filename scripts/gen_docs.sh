@@ -47,6 +47,7 @@ EXAMPLES=(
     ternary
     roc
     slope
+    venn
     twin_y
     all_plots_simple
     all_plots_complex

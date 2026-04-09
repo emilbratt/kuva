@@ -36,6 +36,7 @@ use crate::plot::lollipop::LollipopPlot;
 use crate::plot::survival::SurvivalPlot;
 use crate::plot::roc::RocPlot;
 use crate::plot::slope::SlopePlot;
+use crate::plot::venn::VennPlot;
 use crate::plot::legend::ColorBarInfo;
 use crate::render::render_utils;
 
@@ -79,6 +80,7 @@ pub enum Plot {
     Survival(SurvivalPlot),
     Roc(RocPlot),
     Slope(SlopePlot),
+    Venn(VennPlot),
 }
 
 impl From<ScatterPlot>    for Plot { fn from(p: ScatterPlot)    -> Self { Plot::Scatter(p) } }
@@ -119,6 +121,7 @@ impl From<LollipopPlot>  for Plot { fn from(p: LollipopPlot)  -> Self { Plot::Lo
 impl From<SurvivalPlot>  for Plot { fn from(p: SurvivalPlot)  -> Self { Plot::Survival(p) } }
 impl From<RocPlot>       for Plot { fn from(p: RocPlot)       -> Self { Plot::Roc(p) } }
 impl From<SlopePlot>     for Plot { fn from(p: SlopePlot)     -> Self { Plot::Slope(p) } }
+impl From<VennPlot>      for Plot { fn from(p: VennPlot)      -> Self { Plot::Venn(p) } }
 
 fn bounds_from_2d<I>(points: I) -> Option<((f64, f64), (f64, f64))>
     where
@@ -709,6 +712,8 @@ impl Plot {
                 let pad = (x_max - x_min) * 0.08 + 1e-9;
                 Some(((x_min - pad, x_max + pad), (0.5, n as f64 + 0.5)))
             }
+            // Pixel-space plot — dummy bounds so auto_from_plots sees it
+            Plot::Venn(_) => Some(((-1.0, 1.0), (-1.0, 1.0))),
         }
     }
 
@@ -755,6 +760,7 @@ impl Plot {
                 g.raw_predictions.as_ref().map(|p| p.len()).unwrap_or(100) * 2 + 50
             }).sum::<usize>() + 10,
             Plot::Slope(s) => s.points.len() * 5 + 10,
+            Plot::Venn(v) => v.sets.len() * 10 + 50,
             _ => 100,
         }
     }

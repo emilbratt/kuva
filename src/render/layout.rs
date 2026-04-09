@@ -686,6 +686,15 @@ impl Layout {
                     }
                 }
             }
+
+            if let Plot::Venn(vp) = plot {
+                if vp.legend_label.is_some() {
+                    has_legend = true;
+                    for s in &vp.sets {
+                        max_label_len = max_label_len.max(s.label.len());
+                    }
+                }
+            }
         }
 
         // Save raw data range before padding (log scale needs it)

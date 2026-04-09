@@ -40,6 +40,7 @@
 - [Forest Plot](./plots/forest.md)
 - [ROC Curve](./plots/roc.md)
 - [Slope Chart](./plots/slope.md)
+- [Venn Diagram](./plots/venn.md)
 - [Polar Plot](./plots/polar.md)
 - [Ternary Plot](./plots/ternary.md)
 - [Twin-Y Plot](./plots/twin_y.md)

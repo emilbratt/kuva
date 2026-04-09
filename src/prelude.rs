@@ -89,6 +89,9 @@ pub use crate::plot::{
     SlopePlot,
     SlopePoint,
     SlopeValueFormat,
+    VennPlot,
+    VennSet,
+    VennOverlap,
     // Style / config types used when building plots
     MarkerShape,
     LineStyle,
@@ -119,6 +122,7 @@ pub use crate::render::render::{
     render_roc,
     render_jointplot,
     render_slope,
+    render_venn,
 };
 
 // ── Figure (multi-plot grid) ─────────────────────────────────────────────────

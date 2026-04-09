@@ -36,6 +36,7 @@ pub mod lollipop;
 pub mod survival;
 pub mod roc;
 pub mod slope;
+pub mod venn;
 
 pub mod legend;
 
@@ -79,5 +80,6 @@ pub use lollipop::{LollipopPlot, LollipopPoint, LollipopDomain};
 pub use survival::{SurvivalPlot, KMGroup};
 pub use roc::{RocPlot, RocGroup};
 pub use slope::{SlopePlot, SlopePoint, SlopeValueFormat};
+pub use venn::{VennPlot, VennSet, VennOverlap};
 
 pub use legend::{Legend, LegendEntry, LegendShape, LegendPosition, LegendGroup};

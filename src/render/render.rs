@@ -68,6 +68,7 @@ use crate::plot::clustermap::{Clustermap, ClustermapNorm};
 use crate::plot::raincloud::RaincloudPlot;
 use crate::plot::roc::RocPlot;
 use crate::plot::slope::SlopePlot;
+use crate::plot::venn::VennPlot;
 
 use crate::plot::Legend;
 use crate::plot::legend::{ColorBarInfo, LegendEntry, LegendGroup, LegendPosition, LegendShape};
@@ -2414,6 +2415,824 @@ fn add_slope(sp: &crate::plot::slope::SlopePlot, scene: &mut Scene, computed: &C
 pub fn render_slope(sp: SlopePlot, layout: Layout) -> Scene {
     let plots = vec![crate::render::plots::Plot::Slope(sp)];
     render_multiple(plots, layout)
+}
+
+// ── VennPlot ───────────────────────────────────────────────────────────────────
+
+/// Render a Venn diagram with the given layout.
+pub fn render_venn(vp: VennPlot, layout: Layout) -> Scene {
+    let plots = vec![crate::render::plots::Plot::Venn(vp)];
+    render_multiple(plots, layout)
+}
+
+/// Build a rotated-ellipse SVG path by sampling 72 points.
+fn ellipse_path(cx: f64, cy: f64, rx: f64, ry: f64, angle_deg: f64) -> String {
+    let theta = angle_deg.to_radians();
+    let (cos_t, sin_t) = (theta.cos(), theta.sin());
+    let pts: Vec<(f64, f64)> = (0..=72).map(|i| {
+        let a = i as f64 * std::f64::consts::TAU / 72.0;
+        let lx = rx * a.cos();
+        let ly = ry * a.sin();
+        (cx + lx * cos_t - ly * sin_t, cy + lx * sin_t + ly * cos_t)
+    }).collect();
+    let mut d = format!("M {},{}", round2(pts[0].0), round2(pts[0].1));
+    for p in &pts[1..] {
+        d.push_str(&format!(" L {},{}", round2(p.0), round2(p.1)));
+    }
+    d.push_str(" Z");
+    d
+}
+
+fn point_in_ellipse(px: f64, py: f64, cx: f64, cy: f64, rx: f64, ry: f64, angle_deg: f64) -> bool {
+    let theta = angle_deg.to_radians();
+    let dx = px - cx;
+    let dy = py - cy;
+    let lx =  dx * theta.cos() + dy * theta.sin();
+    let ly = -dx * theta.sin() + dy * theta.cos();
+    (lx / rx).powi(2) + (ly / ry).powi(2) <= 1.0
+}
+
+fn point_in_circle(px: f64, py: f64, cx: f64, cy: f64, r: f64) -> bool {
+    let dx = px - cx;
+    let dy = py - cy;
+    dx * dx + dy * dy <= r * r
+}
+
+/// Lens area between two circles separated by distance `d`.
+fn lens_area(r1: f64, r2: f64, d: f64) -> f64 {
+    if d <= (r1 - r2).abs() {
+        return std::f64::consts::PI * r1.min(r2).powi(2);
+    }
+    if d >= r1 + r2 {
+        return 0.0;
+    }
+    let a1 = ((d * d + r1 * r1 - r2 * r2) / (2.0 * d * r1)).clamp(-1.0, 1.0).acos();
+    let a2 = ((d * d + r2 * r2 - r1 * r1) / (2.0 * d * r2)).clamp(-1.0, 1.0).acos();
+    let tri = 0.5 * ((r1 + r2 + d) * (-d + r1 + r2) * (d - r1 + r2) * (d + r1 - r2)).max(0.0).sqrt();
+    r1 * r1 * a1 + r2 * r2 * a2 - tri
+}
+
+/// Binary-search for the center-to-center distance that produces `target_overlap` area.
+fn solve_distance_2set(r1: f64, r2: f64, target_overlap: f64) -> f64 {
+    let (mut lo, mut hi) = ((r1 - r2).abs(), r1 + r2);
+    // Clamp target so it's achievable
+    let max_area = std::f64::consts::PI * r1.min(r2).powi(2);
+    let target = target_overlap.clamp(0.0, max_area);
+    for _ in 0..64 {
+        let mid = (lo + hi) / 2.0;
+        if lens_area(r1, r2, mid) > target {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (lo + hi) / 2.0
+}
+
+/// Enumerate the bitmask for a point given circle/ellipse geometry.
+/// `shapes` entries: (cx, cy, rx, ry, angle_deg); rx==ry means circle.
+fn point_bitmask(px: f64, py: f64, shapes: &[(f64, f64, f64, f64, f64)]) -> u8 {
+    let mut mask = 0u8;
+    for (i, &(cx, cy, rx, ry, angle)) in shapes.iter().enumerate() {
+        if (rx - ry).abs() < 1e-9 {
+            if point_in_circle(px, py, cx, cy, rx) { mask |= 1 << i; }
+        } else {
+            if point_in_ellipse(px, py, cx, cy, rx, ry, angle) { mask |= 1 << i; }
+        }
+    }
+    mask
+}
+
+/// Sample an 80×80 grid and return the centroid for each bitmask region.
+/// Returns `HashMap<bitmask, (x, y)>`.
+fn region_centroids(
+    shapes: &[(f64, f64, f64, f64, f64)],
+    x0: f64, y0: f64, x1: f64, y1: f64,
+    min_samples: usize,
+) -> std::collections::HashMap<u8, (f64, f64)> {
+    let steps = 80usize;
+    let mut sums: std::collections::HashMap<u8, (f64, f64, usize)> = std::collections::HashMap::new();
+    for iy in 0..steps {
+        let py = y0 + (iy as f64 + 0.5) / steps as f64 * (y1 - y0);
+        for ix in 0..steps {
+            let px = x0 + (ix as f64 + 0.5) / steps as f64 * (x1 - x0);
+            let mask = point_bitmask(px, py, shapes);
+            if mask != 0 {
+                let e = sums.entry(mask).or_insert((0.0, 0.0, 0));
+                e.0 += px;
+                e.1 += py;
+                e.2 += 1;
+            }
+        }
+    }
+    sums.into_iter()
+        .filter(|(_, (_, _, cnt))| *cnt >= min_samples)
+        .map(|(mask, (sx, sy, cnt))| (mask, (sx / cnt as f64, sy / cnt as f64)))
+        .collect()
+}
+
+/// Draw coloured set-indicator dots centered above an inline region label.
+/// One dot per "in" set, arranged horizontally, placed just above `first_text_y`.
+fn draw_inline_indicators(
+    vp: &VennPlot,
+    scene: &mut Scene,
+    mask: u8,
+    lx: f64,
+    ly: f64,
+    label_size: u32,
+    n: usize,
+) {
+    if !vp.show_set_indicators || (!vp.show_counts && !vp.show_percentages) {
+        return;
+    }
+    let in_sets: Vec<usize> = (0..n).filter(|&i| mask & (1u8 << i) != 0).collect();
+    if in_sets.is_empty() { return; }
+
+    let dot_r = (label_size as f64 * 0.38).max(2.5_f64);
+    let dot_stride = dot_r * 2.6;
+    let total_dots_w = (in_sets.len() - 1) as f64 * dot_stride + dot_r * 2.0;
+    let dot_start_x = lx - total_dots_w / 2.0 + dot_r;
+    // Place dots so their bottom edge clears the cap-height of the first text line.
+    // In SVG, text `y` is the baseline; cap height ≈ 0.72 × font-size above baseline.
+    let first_text_y = if vp.show_counts { ly - label_size as f64 * 0.6 } else { ly };
+    let dot_cy = first_text_y - label_size as f64 * 0.72 - dot_r - 2.0;
+
+    for (k, &set_i) in in_sets.iter().enumerate() {
+        let color = vp.color_for(set_i);
+        scene.add(Primitive::Circle {
+            cx: dot_start_x + k as f64 * dot_stride,
+            cy: dot_cy,
+            r: dot_r,
+            fill: Color::from(color.as_str()),
+            fill_opacity: None,
+            stroke: Some(Color::from("#ffffff")),
+            stroke_width: Some(0.6),
+        });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_venn(vp: &VennPlot, scene: &mut Scene, computed: &ComputedLayout) {
+    let n = vp.sets.len();
+    if n == 0 || n > 4 { return; }
+
+    let cx = computed.margin_left + computed.plot_width() / 2.0;
+    let cy = computed.margin_top + computed.plot_height() / 2.0;
+    let avail = computed.plot_width().min(computed.plot_height()) / 2.0;
+
+    // Each shape: (cx, cy, rx, ry, angle_deg)
+    // For circles: rx == ry, angle == 0
+    let shapes: Vec<(f64, f64, f64, f64, f64)> = match n {
+        2 => {
+            if vp.proportional {
+                // Proportional: circle areas ∝ set sizes
+                let sz: Vec<f64> = vp.sets.iter().map(|s| {
+                    s.size.unwrap_or_else(|| s.elements.as_deref().map_or(0, |e| e.len())) as f64
+                }).collect();
+                let max_sz = sz.iter().cloned().fold(0.0f64, f64::max).max(1.0);
+                let scale = avail / (max_sz / std::f64::consts::PI).sqrt() / 1.5;
+                let r0 = (sz[0] / std::f64::consts::PI).sqrt() * scale;
+                let r1 = (sz[1] / std::f64::consts::PI).sqrt() * scale;
+                // Overlap size from region_sizes; convert to approximate area
+                let regions = vp.region_sizes();
+                let overlap = regions.get(&0b11).copied().unwrap_or(0) as f64;
+                let overlap_area = overlap / max_sz * std::f64::consts::PI * r0.min(r1).powi(2);
+                let d2 = solve_distance_2set(r0, r1, overlap_area);
+                vec![
+                    (cx - d2 / 2.0, cy, r0, r0, 0.0),
+                    (cx + d2 / 2.0, cy, r1, r1, 0.0),
+                ]
+            } else {
+                // Classic: equal circles, ~40% overlap
+                let r = avail * 0.55;
+                vec![
+                    (cx - r * 0.5, cy, r, r, 0.0),
+                    (cx + r * 0.5, cy, r, r, 0.0),
+                ]
+            }
+        }
+        3 => {
+            if vp.proportional {
+                let sz: Vec<f64> = vp.sets.iter().map(|s| {
+                    s.size.unwrap_or_else(|| s.elements.as_deref().map_or(0, |e| e.len())) as f64
+                }).collect();
+                let max_sz = sz.iter().cloned().fold(0.0f64, f64::max).max(1.0);
+                let scale = avail * 0.9 / ((max_sz / std::f64::consts::PI).sqrt() * 2.0);
+                let r: Vec<f64> = sz.iter().map(|&s| (s / std::f64::consts::PI).sqrt() * scale).collect();
+                let regions = vp.region_sizes();
+                // Get pairwise inclusive overlaps (bitmask 0b011, 0b101, 0b110)
+                let ov_ab = regions.iter().filter(|(&m, _)| m & 0b011 == 0b011).map(|(_, &v)| v).sum::<usize>() as f64;
+                let ov_ac = regions.iter().filter(|(&m, _)| m & 0b101 == 0b101).map(|(_, &v)| v).sum::<usize>() as f64;
+                let ov_bc = regions.iter().filter(|(&m, _)| m & 0b110 == 0b110).map(|(_, &v)| v).sum::<usize>() as f64;
+                // Convert to area (approximate)
+                let area = |ov: f64, ri: f64, rj: f64| -> f64 {
+                    ov / max_sz.max(1.0) * std::f64::consts::PI * ri.min(rj).powi(2)
+                };
+                let d_ab = solve_distance_2set(r[0], r[1], area(ov_ab, r[0], r[1]));
+                let d_ac = solve_distance_2set(r[0], r[2], area(ov_ac, r[0], r[2]));
+                let d_bc = solve_distance_2set(r[1], r[2], area(ov_bc, r[1], r[2]));
+                // Clamp distances so circles always visually overlap
+                let d_ab = d_ab.min((r[0] + r[1]) * 0.9);
+                let d_ac = d_ac.min((r[0] + r[2]) * 0.9);
+                let d_bc = d_bc.min((r[1] + r[2]) * 0.9);
+                // Place A at top, B at bottom-left, C at bottom-right via trilateration
+                let ay = cy - d_ab.max(d_ac) * 0.4;
+                let ax = cx;
+                // B: at distance d_ab from A, placed lower-left
+                let bx = ax - d_ab * (60.0f64.to_radians().sin()) / 2.0 * 1.2;
+                let by_raw = ay + (d_ab * d_ab - (bx - ax).powi(2)).max(0.0).sqrt();
+                let by = by_raw.min(cy + avail * 0.8);
+                // C: intersect circles at A (d_ac) and B (d_bc)
+                let ab_dist = ((bx - ax).powi(2) + (by - ay).powi(2)).sqrt().max(1e-9);
+                let cos_c = ((d_ac * d_ac + ab_dist * ab_dist - d_bc * d_bc) / (2.0 * d_ac * ab_dist)).clamp(-1.0, 1.0);
+                let angle_ab = (by - ay).atan2(bx - ax);
+                let angle_c = angle_ab - cos_c.acos();
+                let ccx = ax + d_ac * angle_c.cos();
+                let ccy = ay + d_ac * angle_c.sin();
+                vec![
+                    (ax,  ay,  r[0], r[0], 0.0),
+                    (bx,  by,  r[1], r[1], 0.0),
+                    (ccx, ccy, r[2], r[2], 0.0),
+                ]
+            } else {
+                // Classic equilateral triangle arrangement
+                let r = avail * 0.55;
+                let offset = r * 0.55;
+                let sin60 = (60.0f64.to_radians()).sin();
+                let cos60 = (60.0f64.to_radians()).cos();
+                vec![
+                    (cx,                      cy - offset,             r, r, 0.0),
+                    (cx - offset * sin60,      cy + offset * cos60,     r, r, 0.0),
+                    (cx + offset * sin60,      cy + offset * cos60,     r, r, 0.0),
+                ]
+            }
+        }
+        4 => {
+            // Standard symmetric 4-set arrangement with rotated ellipses
+            let rx = avail * 0.72;
+            let ry = avail * 0.44;
+            vec![
+                (cx - avail * 0.20, cy - avail * 0.05, rx, ry, 45.0),
+                (cx + avail * 0.20, cy - avail * 0.05, rx, ry, 135.0),
+                (cx - avail * 0.20, cy + avail * 0.05, rx, ry, 135.0),
+                (cx + avail * 0.20, cy + avail * 0.05, rx, ry, 45.0),
+            ]
+        }
+        _ => return,
+    };
+
+    // Draw filled shapes (fill first, then stroke outlines)
+    for (i, &(scx, scy, srx, sry, angle)) in shapes.iter().enumerate() {
+        let color = vp.color_for(i);
+        let c = Color::from(color.as_str());
+        let is_circle = (srx - sry).abs() < 1e-9;
+        if is_circle {
+            scene.add(Primitive::Circle {
+                cx: scx,
+                cy: scy,
+                r: srx,
+                fill: c.clone(),
+                fill_opacity: Some(vp.fill_opacity),
+                stroke: Some(c),
+                stroke_width: Some(vp.stroke_width),
+            });
+        } else {
+            let d = ellipse_path(scx, scy, srx, sry, angle);
+            scene.add(Primitive::Path(Box::new(PathData {
+                d,
+                fill: Some(c.clone()),
+                stroke: c,
+                stroke_width: vp.stroke_width,
+                opacity: Some(vp.fill_opacity),
+                stroke_dasharray: None,
+            })));
+        }
+    }
+
+    // Compute region sizes and total
+    let region_map = vp.region_sizes();
+    let total: usize = region_map.values().sum::<usize>().max(1);
+
+    // Sample grid for centroid placement
+    let x0 = computed.margin_left;
+    let y0 = computed.margin_top;
+    let x1 = computed.margin_left + computed.plot_width();
+    let y1 = computed.margin_top + computed.plot_height();
+    // 4-set has 15 crowded regions — require more grid samples and use a smaller font.
+    // In leader-lines mode use the same quality threshold: rejected centroids need
+    // to be accurate so the march-outward algorithm finds the right exit direction.
+    let min_samples = if n == 4 { 15 } else { 5 };
+    let centroids = region_centroids(&shapes, x0, y0, x1, y1, min_samples);
+
+    let total_masks = 1u8 << n;
+    let label_size = if n == 4 {
+        ((computed.body_size as f64 * 0.78) as u32).max(8)
+    } else {
+        computed.body_size
+    };
+
+    if vp.leader_lines {
+        // ── Leader-lines mode ────────────────────────────────────────────────
+        // Phase 1: run inline collision avoidance, same as the else branch.
+        // Accepted labels are drawn inline; rejected labels get leader lines.
+
+        use std::f64::consts::TAU;
+
+        let min_label_dist = if n == 4 {
+            label_size as f64 * 3.2
+        } else {
+            label_size as f64 * 2.0
+        };
+        let mut masks_ordered: Vec<u8> = (1..total_masks).collect();
+        masks_ordered.sort_by_key(|&m| {
+            std::cmp::Reverse(region_map.get(&m).copied().unwrap_or(0))
+        });
+
+        let mut placed: Vec<(f64, f64)> = Vec::new();
+        // (mask, centroid_x, centroid_y)
+        let mut rejected: Vec<(u8, f64, f64)> = Vec::new();
+
+        for &mask in &masks_ordered {
+            let Some(&(lx, ly)) = centroids.get(&mask) else { continue };
+            let blocked = placed.iter().any(|&(px, py)| {
+                let dx = lx - px;
+                let dy = ly - py;
+                (dx * dx + dy * dy).sqrt() < min_label_dist
+            });
+            if blocked {
+                rejected.push((mask, lx, ly));
+                continue;
+            }
+            placed.push((lx, ly));
+
+            // Draw inline label (identical to else branch).
+            let count = region_map.get(&mask).copied().unwrap_or(0);
+            let count_str = count.to_string();
+            let pct_str = format!("({:.1}%)", count as f64 / total as f64 * 100.0);
+
+            // Set-indicator dots above the text block.
+            draw_inline_indicators(vp, scene, mask, lx, ly, label_size, n);
+
+            match (vp.show_counts, vp.show_percentages) {
+                (true, true) => {
+                    scene.add(Primitive::Text {
+                        x: lx,
+                        y: ly - label_size as f64 * 0.6,
+                        content: count_str,
+                        size: label_size,
+                        anchor: TextAnchor::Middle,
+                        rotate: None,
+                        bold: false,
+                    });
+                    scene.add(Primitive::Text {
+                        x: lx,
+                        y: ly + label_size as f64 * 0.8,
+                        content: pct_str,
+                        size: label_size.saturating_sub(2),
+                        anchor: TextAnchor::Middle,
+                        rotate: None,
+                        bold: false,
+                    });
+                }
+                (true, false) => {
+                    scene.add(Primitive::Text {
+                        x: lx,
+                        y: ly,
+                        content: count_str,
+                        size: label_size,
+                        anchor: TextAnchor::Middle,
+                        rotate: None,
+                        bold: false,
+                    });
+                }
+                (false, true) => {
+                    scene.add(Primitive::Text {
+                        x: lx,
+                        y: ly,
+                        content: pct_str,
+                        size: label_size,
+                        anchor: TextAnchor::Middle,
+                        rotate: None,
+                        bold: false,
+                    });
+                }
+                (false, false) => {}
+            }
+        }
+
+        // Phase 2: for each rejected region, march outward from its centroid
+        // until we leave all shapes, then add a small gap — this lands us just
+        // outside the nearest shape boundary, keeping labels tight to the diagram.
+        // Entry: (mask, centroid_xy, anchor_xy, initial_angle)
+        #[allow(clippy::type_complexity)]
+        let mut leader_entries: Vec<(u8, (f64, f64), (f64, f64), f64)> = Vec::new();
+
+        for &(mask, cen_x, cen_y) in &rejected {
+            let raw_dx = cen_x - cx;
+            let raw_dy = cen_y - cy;
+            let dist = (raw_dx * raw_dx + raw_dy * raw_dy).sqrt();
+            let (dir_x, dir_y) = if dist > 1e-9 {
+                (raw_dx / dist, raw_dy / dist)
+            } else {
+                // Centroid is at the diagram centre; distribute radially.
+                let a = leader_entries.len() as f64 * TAU / rejected.len().max(1) as f64;
+                (a.cos(), a.sin())
+            };
+
+            // March outward in small steps until outside all shapes.
+            let step = 3.0_f64;
+            let mut mx = cen_x;
+            let mut my = cen_y;
+            for _ in 0..400 {
+                mx += dir_x * step;
+                my += dir_y * step;
+                if point_bitmask(mx, my, &shapes) == 0 {
+                    break;
+                }
+            }
+            // Add a gap so the label anchor sits clear of the shape boundary.
+            let anchor_x = mx + dir_x * 10.0;
+            let anchor_y = my + dir_y * 10.0;
+            let angle = (anchor_y - cy).atan2(anchor_x - cx);
+
+            leader_entries.push((mask, (cen_x, cen_y), (anchor_x, anchor_y), angle));
+        }
+
+        if leader_entries.is_empty() {
+            // Nothing to do.
+        } else {
+            // Phase 3: sort by angle and run a spreading pass so leader-line labels
+            // don't crowd each other.
+            leader_entries.sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal));
+            let mut angles: Vec<f64> = leader_entries.iter().map(|e| e.3).collect();
+
+            // Use a common radius: the max anchor distance from the diagram centre.
+            // This puts all leader labels on a consistent outer ring.
+            let label_r = leader_entries.iter()
+                .map(|(_, _, (ax, ay), _)| {
+                    ((ax - cx).powi(2) + (ay - cy).powi(2)).sqrt()
+                })
+                .fold(0.0_f64, f64::max);
+
+            let min_gap = 0.28_f64; // ~16 degrees
+            for _ in 0..5 {
+                let m = angles.len();
+                if m < 2 { break; }
+                for i in 0..m {
+                    let j = (i + 1) % m;
+                    let raw_gap = if j == 0 {
+                        angles[0] + TAU - angles[m - 1]
+                    } else {
+                        angles[j] - angles[i]
+                    };
+                    if raw_gap < min_gap {
+                        let push = (min_gap - raw_gap) / 2.0;
+                        if j == 0 {
+                            angles[m - 1] += push;
+                            angles[0] -= push;
+                        } else {
+                            angles[i] -= push;
+                            angles[j] += push;
+                        }
+                    }
+                }
+            }
+
+            // Phase 4: compute final label positions, clamp to canvas with edge margin.
+            let edge_margin = 8.0_f64;
+            let left_bound   = computed.margin_left + edge_margin;
+            let right_bound  = computed.margin_left + computed.plot_width() - edge_margin;
+            let top_bound    = computed.margin_top + edge_margin;
+            let bottom_bound = computed.margin_top + computed.plot_height() - edge_margin;
+
+            for (idx, (mask, (cen_x, cen_y), _, _)) in leader_entries.iter().enumerate() {
+                let angle = angles[idx];
+
+                // Project label onto the shared outer ring, then clamp.
+                let lx = (cx + label_r * angle.cos()).clamp(left_bound, right_bound);
+                let ly = (cy + label_r * angle.sin()).clamp(top_bound, bottom_bound);
+
+                // Thin grey leader line from centroid to just short of the label.
+                let ldx = lx - cen_x;
+                let ldy = ly - cen_y;
+                let ldist = (ldx * ldx + ldy * ldy).sqrt().max(1.0);
+                let (lnx, lny) = (ldx / ldist, ldy / ldist);
+
+                scene.add(Primitive::Line {
+                    x1: *cen_x,
+                    y1: *cen_y,
+                    x2: lx - lnx * 6.0,
+                    y2: ly - lny * 6.0,
+                    stroke: Color::from("#aaaaaa"),
+                    stroke_width: 1.0,
+                    stroke_dasharray: None,
+                });
+
+                // Per-set indicator dots + count text, side-anchored.
+                let in_sets: Vec<usize> = (0..n).filter(|&i| mask & (1u8 << i) != 0).collect();
+                let count = region_map.get(mask).copied().unwrap_or(0);
+                let count_str = count.to_string();
+                let pct_str = format!("({:.1}%)", count as f64 / total as f64 * 100.0);
+
+                let dot_r       = (label_size as f64 * 0.42).max(3.0);
+                let dot_stride  = dot_r * 2.6;
+                let total_dots_w = if vp.show_set_indicators {
+                    in_sets.len() as f64 * dot_stride
+                } else {
+                    0.0
+                };
+                let count_text_w = count_str.len() as f64 * label_size as f64 * 0.62;
+                let text_gap = if vp.show_set_indicators { 4.0 } else { 0.0 };
+
+                let nx = lnx; // reuse: direction from centroid toward label
+                let group_start_x = if nx > 0.15 {
+                    lx
+                } else if nx < -0.15 {
+                    lx - total_dots_w - text_gap - count_text_w
+                } else {
+                    lx - (total_dots_w + text_gap + count_text_w) / 2.0
+                };
+
+                if vp.show_set_indicators {
+                    for (k, &set_i) in in_sets.iter().enumerate() {
+                        let color = vp.color_for(set_i);
+                        let dot_cx = group_start_x + dot_r + k as f64 * dot_stride;
+                        scene.add(Primitive::Circle {
+                            cx: dot_cx,
+                            cy: ly,
+                            r: dot_r,
+                            fill: Color::from(color.as_str()),
+                            fill_opacity: None,
+                            stroke: Some(Color::from("#ffffff")),
+                            stroke_width: Some(0.8),
+                        });
+                    }
+                }
+
+                let text_x = group_start_x + total_dots_w + text_gap;
+                let text_y = ly + label_size as f64 * 0.35;
+
+                if vp.show_counts {
+                    scene.add(Primitive::Text {
+                        x: text_x,
+                        y: text_y,
+                        content: count_str,
+                        size: label_size,
+                        anchor: TextAnchor::Start,
+                        rotate: None,
+                        bold: false,
+                    });
+                }
+                if vp.show_percentages {
+                    scene.add(Primitive::Text {
+                        x: text_x,
+                        y: text_y + label_size as f64 * 1.3,
+                        content: pct_str,
+                        size: label_size.saturating_sub(2),
+                        anchor: TextAnchor::Start,
+                        rotate: None,
+                        bold: false,
+                    });
+                }
+            }
+        }
+    } else {
+        // ── Inline collision-avoidance mode (default) ────────────────────────
+        // For 4-set diagrams the central intersection regions are geometrically tiny and
+        // their centroids cluster together.  We use greedy collision avoidance: sort
+        // regions by size (largest first) and skip any label whose centroid is within
+        // `min_label_dist` pixels of an already-placed label.
+        let min_label_dist = if n == 4 { label_size as f64 * 3.2 } else { 0.0 };
+        let mut masks_ordered: Vec<u8> = (1..total_masks).collect();
+        if n == 4 {
+            masks_ordered.sort_by_key(|&m| {
+                std::cmp::Reverse(region_map.get(&m).copied().unwrap_or(0))
+            });
+        }
+        let mut placed: Vec<(f64, f64)> = Vec::new();
+
+        for mask in masks_ordered {
+            let count = region_map.get(&mask).copied().unwrap_or(0);
+            if let Some(&(lx, ly)) = centroids.get(&mask) {
+                // Collision check: skip if too close to any already-placed label.
+                if min_label_dist > 0.0 {
+                    let blocked = placed.iter().any(|&(px, py)| {
+                        let dx = lx - px;
+                        let dy = ly - py;
+                        (dx * dx + dy * dy).sqrt() < min_label_dist
+                    });
+                    if blocked { continue; }
+                }
+                placed.push((lx, ly));
+
+                let count_str = count.to_string();
+                let pct_str = format!("({:.1}%)", count as f64 / total as f64 * 100.0);
+
+                // Set-indicator dots above the text block.
+                draw_inline_indicators(vp, scene, mask, lx, ly, label_size, n);
+
+                match (vp.show_counts, vp.show_percentages) {
+                    (true, true) => {
+                        scene.add(Primitive::Text {
+                            x: lx,
+                            y: ly - label_size as f64 * 0.6,
+                            content: count_str,
+                            size: label_size,
+                            anchor: TextAnchor::Middle,
+                            rotate: None,
+                            bold: false,
+                        });
+                        scene.add(Primitive::Text {
+                            x: lx,
+                            y: ly + label_size as f64 * 0.8,
+                            content: pct_str,
+                            size: label_size.saturating_sub(2),
+                            anchor: TextAnchor::Middle,
+                            rotate: None,
+                            bold: false,
+                        });
+                    }
+                    (true, false) => {
+                        scene.add(Primitive::Text {
+                            x: lx,
+                            y: ly,
+                            content: count_str,
+                            size: label_size,
+                            anchor: TextAnchor::Middle,
+                            rotate: None,
+                            bold: false,
+                        });
+                    }
+                    (false, true) => {
+                        scene.add(Primitive::Text {
+                            x: lx,
+                            y: ly,
+                            content: pct_str,
+                            size: label_size,
+                            anchor: TextAnchor::Middle,
+                            rotate: None,
+                            bold: false,
+                        });
+                    }
+                    (false, false) => {}
+                }
+            }
+        }
+    }
+
+    // Set name labels — placed outside each shape, in the direction away from the
+    // diagram centre.  For circles the boundary is trivial; for rotated ellipses we
+    // find the parametric point that maximises the dot product with the outward direction.
+    if vp.show_set_labels {
+        let label_size_big = ((computed.body_size as f64 * 1.1) as u32).max(computed.body_size);
+        let label_margin = label_size_big as f64 + 6.0;
+
+        for (i, set) in vp.sets.iter().enumerate() {
+            let (ecx, ecy, rx, ry, angle_deg) = shapes[i];
+
+            // Outward direction from diagram centre → shape centre.
+            // For 2-set the centres are exactly horizontal; add a slight upward bias so
+            // labels end up above the circles rather than directly to the side.
+            let (raw_dx, raw_dy) = (ecx - cx, ecy - cy);
+            let (raw_dx, raw_dy) = if n == 2 {
+                // Bias: 70 % horizontal + 30 % upward
+                (raw_dx, raw_dy - raw_dx.abs() * 0.45)
+            } else {
+                (raw_dx, raw_dy)
+            };
+            let dist = (raw_dx * raw_dx + raw_dy * raw_dy).sqrt();
+            let (nx, ny) = if dist > 1e-9 {
+                (raw_dx / dist, raw_dy / dist)
+            } else {
+                // Centred shape — distribute directions evenly
+                let angle = i as f64 * std::f64::consts::TAU / n as f64;
+                (angle.cos(), -angle.sin())
+            };
+
+            // Boundary point of the shape in direction (nx, ny)
+            let (bx, by) = if (rx - ry).abs() < 1e-9 {
+                // Circle
+                (ecx + nx * rx, ecy + ny * ry)
+            } else {
+                // Rotated ellipse: maximise (x-ecx)*nx + (y-ecy)*ny over the ellipse.
+                // In local (un-rotated) frame: a = nx·cos θ + ny·sin θ, b = -nx·sin θ + ny·cos θ
+                // optimum t = atan2(ry·b, rx·a)
+                let theta = angle_deg.to_radians();
+                let a = nx * theta.cos() + ny * theta.sin();
+                let b = -nx * theta.sin() + ny * theta.cos();
+                let t = (ry * b).atan2(rx * a);
+                let bx = ecx + rx * t.cos() * theta.cos() - ry * t.sin() * theta.sin();
+                let by = ecy + rx * t.cos() * theta.sin() + ry * t.sin() * theta.cos();
+                (bx, by)
+            };
+
+            let label_x = bx + nx * label_margin;
+            // Small baseline adjustment so the text visual centre aligns with the point
+            let label_y = by + ny * label_margin + label_size_big as f64 * 0.35;
+
+            let anchor = if nx < -0.25 { TextAnchor::End }
+                         else if nx > 0.25 { TextAnchor::Start }
+                         else { TextAnchor::Middle };
+
+            scene.add(Primitive::Text {
+                x: label_x,
+                y: label_y,
+                content: set.label.clone(),
+                size: label_size_big,
+                anchor,
+                rotate: None,
+                bold: true,
+            });
+        }
+    }
+
+    // ── Proportional stress display ───────────────────────────────────────────
+    // Stress (venneuler formula) measures how accurately the visual circle/ellipse
+    // areas represent the target region sizes.  0 = perfect; >0.2 = poor.
+    if vp.proportional && vp.show_loss {
+        let mut grid_counts: std::collections::HashMap<u8, usize> = std::collections::HashMap::new();
+        for iy in 0..80usize {
+            let py = y0 + (iy as f64 + 0.5) / 80.0 * (y1 - y0);
+            for ix in 0..80usize {
+                let px = x0 + (ix as f64 + 0.5) / 80.0 * (x1 - x0);
+                let m = point_bitmask(px, py, &shapes);
+                if m != 0 {
+                    *grid_counts.entry(m).or_insert(0) += 1;
+                }
+            }
+        }
+        let total_grid = grid_counts.values().sum::<usize>().max(1) as f64;
+        let total_target = region_map.values().sum::<usize>().max(1) as f64;
+
+        // venneuler stress: sqrt(Σ(aᵢ−tᵢ)² / Σtᵢ²)
+        let mut sq_num = 0.0_f64;
+        let mut sq_den = 0.0_f64;
+        for mask in 1..total_masks {
+            let ai = grid_counts.get(&mask).copied().unwrap_or(0) as f64 / total_grid;
+            let ti = region_map.get(&mask).copied().unwrap_or(0) as f64 / total_target;
+            sq_num += (ai - ti).powi(2);
+            sq_den += ti.powi(2);
+        }
+        let stress = if sq_den > 1e-12 { (sq_num / sq_den).sqrt() } else { 0.0 };
+
+        // Render as a small info box in the bottom-right corner of the plot area.
+        let text_size = 10u32;
+        let label_text  = "Layout stress";
+        let value_text  = format!("{stress:.3}");
+        let pad_x = 7.0_f64;
+        let pad_y = 5.0_f64;
+        let row_h = text_size as f64 * 1.4;
+        let box_w = (label_text.len().max(value_text.len()) as f64 * text_size as f64 * 0.62
+                     + pad_x * 2.0)
+                    .max(90.0_f64);
+        let box_h = row_h * 2.0 + pad_y * 2.0;
+        let box_x = computed.margin_left + computed.plot_width()  - 8.0 - box_w;
+        let box_y = computed.margin_top  + computed.plot_height() - 8.0 - box_h;
+
+        // Background + border
+        scene.add(Primitive::Rect {
+            x: box_x,
+            y: box_y,
+            width: box_w,
+            height: box_h,
+            fill: Color::from("#ffffff"),
+            stroke: Some(Color::from("#cccccc")),
+            stroke_width: Some(0.8),
+            opacity: Some(0.92),
+        });
+        // Thin header strip
+        scene.add(Primitive::Rect {
+            x: box_x,
+            y: box_y,
+            width: box_w,
+            height: row_h + pad_y,
+            fill: Color::from("#f0f0f0"),
+            stroke: None,
+            stroke_width: None,
+            opacity: Some(0.92),
+        });
+
+        // "Layout stress" label (header row)
+        scene.add(Primitive::Text {
+            x: box_x + pad_x,
+            y: box_y + pad_y + text_size as f64 * 0.75,
+            content: label_text.to_string(),
+            size: text_size,
+            anchor: TextAnchor::Start,
+            rotate: None,
+            bold: true,
+        });
+        // Stress value (value row)
+        scene.add(Primitive::Text {
+            x: box_x + pad_x,
+            y: box_y + pad_y + row_h + text_size as f64 * 0.75,
+            content: value_text,
+            size: text_size,
+            anchor: TextAnchor::Start,
+            rotate: None,
+            bold: false,
+        });
+    }
 }
 
 // ── RaincloudPlot ─────────────────────────────────────────────────────────────
@@ -5848,6 +6667,21 @@ pub fn collect_legend_entries(plots: &[Plot]) -> Vec<LegendEntry> {
                     }
                 }
             }
+            Plot::Venn(vp) => {
+                if vp.legend_label.is_some() {
+                    use crate::render::palette::Palette;
+                    let _pal = Palette::category10();
+                    for (i, set) in vp.sets.iter().enumerate() {
+                        let color = vp.color_for(i);
+                        entries.push(LegendEntry {
+                            label: set.label.clone(),
+                            color,
+                            shape: LegendShape::Circle,
+                            dasharray: None,
+                        });
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -7359,7 +8193,7 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
         let skip_axes_for_meta = plots.iter().all(|p| matches!(p,
             Plot::Pie(_) | Plot::UpSet(_) | Plot::Chord(_) | Plot::Sankey(_)
             | Plot::PhyloTree(_) | Plot::Synteny(_) | Plot::Polar(_) | Plot::Ternary(_)
-            | Plot::Clustermap(_) | Plot::Joint(_)));
+            | Plot::Clustermap(_) | Plot::Joint(_) | Plot::Venn(_)));
         if !skip_axes_for_meta {
             scene.axis_meta = Some(AxisMeta {
                 x_min: computed.x_range.0,
@@ -7376,7 +8210,7 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
         }
     }
 
-    let skip_axes = plots.iter().all(|p| matches!(p, Plot::Pie(_) | Plot::UpSet(_) | Plot::Chord(_) | Plot::Sankey(_) | Plot::PhyloTree(_) | Plot::Synteny(_) | Plot::Polar(_) | Plot::Ternary(_) | Plot::DicePlot(_) | Plot::Clustermap(_) | Plot::Joint(_)));
+    let skip_axes = plots.iter().all(|p| matches!(p, Plot::Pie(_) | Plot::UpSet(_) | Plot::Chord(_) | Plot::Sankey(_) | Plot::PhyloTree(_) | Plot::Synteny(_) | Plot::Polar(_) | Plot::Ternary(_) | Plot::DicePlot(_) | Plot::Clustermap(_) | Plot::Joint(_) | Plot::Venn(_)));
     if !skip_axes {
         add_axes_and_grid(&mut scene, &computed, &layout);
     }
@@ -7585,6 +8419,9 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
             }
             Plot::Slope(s) => {
                 add_slope(s, &mut scene, &computed);
+            }
+            Plot::Venn(v) => {
+                add_venn(v, &mut scene, &computed);
             }
         }
     }
