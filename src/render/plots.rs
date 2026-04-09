@@ -35,6 +35,7 @@ use crate::plot::raincloud::RaincloudPlot;
 use crate::plot::lollipop::LollipopPlot;
 use crate::plot::survival::SurvivalPlot;
 use crate::plot::roc::RocPlot;
+use crate::plot::slope::SlopePlot;
 use crate::plot::legend::ColorBarInfo;
 use crate::render::render_utils;
 
@@ -77,6 +78,7 @@ pub enum Plot {
     Lollipop(LollipopPlot),
     Survival(SurvivalPlot),
     Roc(RocPlot),
+    Slope(SlopePlot),
 }
 
 impl From<ScatterPlot>    for Plot { fn from(p: ScatterPlot)    -> Self { Plot::Scatter(p) } }
@@ -116,6 +118,7 @@ impl From<RaincloudPlot> for Plot { fn from(p: RaincloudPlot) -> Self { Plot::Ra
 impl From<LollipopPlot>  for Plot { fn from(p: LollipopPlot)  -> Self { Plot::Lollipop(p) } }
 impl From<SurvivalPlot>  for Plot { fn from(p: SurvivalPlot)  -> Self { Plot::Survival(p) } }
 impl From<RocPlot>       for Plot { fn from(p: RocPlot)       -> Self { Plot::Roc(p) } }
+impl From<SlopePlot>     for Plot { fn from(p: SlopePlot)     -> Self { Plot::Slope(p) } }
 
 fn bounds_from_2d<I>(points: I) -> Option<((f64, f64), (f64, f64))>
     where
@@ -170,6 +173,7 @@ impl Plot {
             Plot::Lollipop(l) => l.color = color.into(),
             Plot::Survival(s) => s.color = color.into(),
             Plot::Roc(r) => r.color = color.into(),
+            Plot::Slope(s) => s.color = color.into(),
             _ => {}
         }
     }
@@ -692,6 +696,19 @@ impl Plot {
                 Some(((x_min, x_max), (y_min, y_max)))
             }
             Plot::Roc(_) => Some(((0.0, 1.0), (0.0, 1.0))),
+            Plot::Slope(s) => {
+                let n = s.points.len();
+                if n == 0 { return None; }
+                let mut x_min = f64::INFINITY;
+                let mut x_max = f64::NEG_INFINITY;
+                for p in &s.points {
+                    x_min = x_min.min(p.before).min(p.after);
+                    x_max = x_max.max(p.before).max(p.after);
+                }
+                if !x_min.is_finite() { return None; }
+                let pad = (x_max - x_min) * 0.08 + 1e-9;
+                Some(((x_min - pad, x_max + pad), (0.5, n as f64 + 0.5)))
+            }
         }
     }
 
@@ -737,6 +754,7 @@ impl Plot {
             Plot::Roc(r) => r.groups.iter().map(|g| {
                 g.raw_predictions.as_ref().map(|p| p.len()).unwrap_or(100) * 2 + 50
             }).sum::<usize>() + 10,
+            Plot::Slope(s) => s.points.len() * 5 + 10,
             _ => 100,
         }
     }

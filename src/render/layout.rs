@@ -626,6 +626,26 @@ impl Layout {
                 }
             }
 
+            if let Plot::Slope(sp) = plot {
+                // Reversed: points[0] at top; y=n is the largest y value (maps to top)
+                y_labels = Some(sp.points.iter().rev().map(|p| p.label.clone()).collect());
+                if sp.legend_label.is_some() {
+                    has_legend = true;
+                    if sp.color_by_direction {
+                        // "Decrease" is the longest direction label (8 chars)
+                        max_label_len = max_label_len.max(8);
+                    } else if let Some(ref gc) = sp.group_colors {
+                        // Per-group: use point labels
+                        let _ = gc;
+                        for p in &sp.points {
+                            max_label_len = max_label_len.max(p.label.len());
+                        }
+                    } else {
+                        max_label_len = max_label_len.max(5);
+                    }
+                }
+            }
+
             if let Plot::Forest(fp) = plot {
                 // Reversed: row[0] at top, map_y maps larger values to top
                 y_labels = Some(fp.rows.iter().rev().map(|r| r.label.clone()).collect());

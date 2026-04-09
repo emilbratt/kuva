@@ -67,6 +67,7 @@ use crate::plot::forest::ForestPlot;
 use crate::plot::clustermap::{Clustermap, ClustermapNorm};
 use crate::plot::raincloud::RaincloudPlot;
 use crate::plot::roc::RocPlot;
+use crate::plot::slope::SlopePlot;
 
 use crate::plot::Legend;
 use crate::plot::legend::{ColorBarInfo, LegendEntry, LegendGroup, LegendPosition, LegendShape};
@@ -2256,6 +2257,162 @@ fn add_roc(roc: &RocPlot, scene: &mut Scene, computed: &ComputedLayout) {
 /// Render a single ROC plot.
 pub fn render_roc(roc: RocPlot, layout: Layout) -> Scene {
     let plots = vec![crate::render::plots::Plot::Roc(roc)];
+    render_multiple(plots, layout)
+}
+
+// ── SlopePlot ─────────────────────────────────────────────────────────────────
+
+fn add_slope(sp: &crate::plot::slope::SlopePlot, scene: &mut Scene, computed: &ComputedLayout) {
+    use crate::plot::slope::SlopeValueFormat;
+
+    let n = sp.points.len();
+    if n == 0 { return; }
+
+    for (i, pt) in sp.points.iter().enumerate() {
+        // points[0] at top → y_data = n, points[n-1] at bottom → y_data = 1
+        let y_data = (n - i) as f64;
+        let py = computed.map_y(y_data);
+        let px_before = computed.map_x(pt.before);
+        let px_after  = computed.map_x(pt.after);
+
+        // Pick color for this row
+        let color_str: &str = if let Some(ref gc) = sp.group_colors {
+            gc.get(i).map(|s| s.as_str()).unwrap_or(&sp.color)
+        } else if sp.color_by_direction {
+            if pt.after > pt.before { &sp.color_up }
+            else if pt.after < pt.before { &sp.color_down }
+            else { &sp.color_flat }
+        } else {
+            &sp.color
+        };
+        let color = Color::from(color_str);
+
+        // Connecting line — rendered as a Path so we can apply line_opacity
+        let d = format!("M {},{} L {},{}", round2(px_before), round2(py), round2(px_after), round2(py));
+        scene.add(Primitive::Path(Box::new(PathData {
+            d,
+            fill: None,
+            stroke: color.clone(),
+            stroke_width: sp.line_width,
+            opacity: Some(sp.line_opacity),
+            stroke_dasharray: None,
+        })));
+
+        // Before dot
+        scene.add(Primitive::Circle {
+            cx: px_before,
+            cy: py,
+            r: sp.dot_radius,
+            fill: color.clone(),
+            fill_opacity: if sp.dot_opacity < 1.0 { Some(sp.dot_opacity) } else { None },
+            stroke: Some(Color::from("white")),
+            stroke_width: Some(1.5),
+        });
+
+        // After dot
+        scene.add(Primitive::Circle {
+            cx: px_after,
+            cy: py,
+            r: sp.dot_radius,
+            fill: color.clone(),
+            fill_opacity: if sp.dot_opacity < 1.0 { Some(sp.dot_opacity) } else { None },
+            stroke: Some(Color::from("white")),
+            stroke_width: Some(1.5),
+        });
+
+        // Value labels
+        if sp.show_values {
+            let fmt_val = |v: f64| -> String {
+                match &sp.value_format {
+                    SlopeValueFormat::Auto => {
+                        if v.fract().abs() < 1e-9 {
+                            format!("{:.0}", v)
+                        } else {
+                            let s = format!("{:.2}", v);
+                            let s = s.trim_end_matches('0');
+                            let s = s.trim_end_matches('.');
+                            s.to_string()
+                        }
+                    }
+                    SlopeValueFormat::Fixed(prec) => format!("{:.*}", prec, v),
+                    SlopeValueFormat::Integer => format!("{:.0}", v),
+                }
+            };
+
+            // Labels go on the outer side of each dot (away from the connecting line).
+            // Whichever dot is further left gets anchor=End (label extends leftward);
+            // whichever is further right gets anchor=Start (label extends rightward).
+            let label_y = py + computed.body_size as f64 * 0.35;
+            let label_size = (computed.body_size as f64 * 0.75) as u32;
+            let gap = sp.dot_radius + 3.0;
+            let (before_x, before_anchor, after_x, after_anchor) = if px_before <= px_after {
+                // Increase: before is the left dot, after is the right dot
+                (px_before - gap, TextAnchor::End, px_after + gap, TextAnchor::Start)
+            } else {
+                // Decrease: before is the right dot, after is the left dot
+                (px_before + gap, TextAnchor::Start, px_after - gap, TextAnchor::End)
+            };
+            scene.add(Primitive::Text {
+                x: before_x,
+                y: label_y,
+                content: fmt_val(pt.before),
+                size: label_size,
+                anchor: before_anchor,
+                bold: false,
+                rotate: None,
+            });
+            scene.add(Primitive::Text {
+                x: after_x,
+                y: label_y,
+                content: fmt_val(pt.after),
+                size: label_size,
+                anchor: after_anchor,
+                bold: false,
+                rotate: None,
+            });
+        }
+    }
+
+    // Column header labels (before_label / after_label) drawn above the plot area
+    if let Some(ref bl) = sp.before_label {
+        let n_pts = sp.points.len() as f64;
+        let mean_before_px = if n_pts > 0.0 {
+            computed.map_x(sp.points.iter().map(|p| p.before).sum::<f64>() / n_pts)
+        } else {
+            computed.map_x(0.0)
+        };
+        scene.add(Primitive::Text {
+            x: mean_before_px,
+            y: computed.margin_top - 8.0,
+            content: bl.clone(),
+            size: (computed.label_size as f64 * 0.85) as u32,
+            anchor: TextAnchor::Middle,
+            bold: true,
+            rotate: None,
+        });
+    }
+    if let Some(ref al) = sp.after_label {
+        let n_pts = sp.points.len() as f64;
+        let mean_after_px = if n_pts > 0.0 {
+            computed.map_x(sp.points.iter().map(|p| p.after).sum::<f64>() / n_pts)
+        } else {
+            computed.map_x(0.0)
+        };
+        scene.add(Primitive::Text {
+            x: mean_after_px,
+            y: computed.margin_top - 8.0,
+            content: al.clone(),
+            size: (computed.label_size as f64 * 0.85) as u32,
+            anchor: TextAnchor::Middle,
+            bold: true,
+            rotate: None,
+        });
+    }
+}
+
+/// Render a single slope / dumbbell chart with the given layout.
+pub fn render_slope(sp: SlopePlot, layout: Layout) -> Scene {
+    let plots = vec![crate::render::plots::Plot::Slope(sp)];
     render_multiple(plots, layout)
 }
 
@@ -5326,6 +5483,45 @@ pub fn collect_legend_entries(plots: &[Plot]) -> Vec<LegendEntry> {
                     });
                 }
             }
+            Plot::Slope(sp) => {
+                if sp.legend_label.is_some() {
+                    if sp.color_by_direction {
+                        entries.push(LegendEntry {
+                            label: "Increase".into(),
+                            color: sp.color_up.clone(),
+                            shape: LegendShape::Circle,
+                            dasharray: None,
+                        });
+                        entries.push(LegendEntry {
+                            label: "Decrease".into(),
+                            color: sp.color_down.clone(),
+                            shape: LegendShape::Circle,
+                            dasharray: None,
+                        });
+                    } else if let Some(ref gc) = sp.group_colors {
+                        // Per-group: one entry per row
+                        for (i, pt) in sp.points.iter().enumerate() {
+                            let color = gc.get(i).cloned().unwrap_or_else(|| sp.color.clone());
+                            entries.push(LegendEntry {
+                                label: pt.label.clone(),
+                                color,
+                                shape: LegendShape::Circle,
+                                dasharray: None,
+                            });
+                        }
+                    } else {
+                        // Uniform: one entry
+                        if let Some(ref label) = sp.legend_label {
+                            entries.push(LegendEntry {
+                                label: label.clone(),
+                                color: sp.color.clone(),
+                                shape: LegendShape::Circle,
+                                dasharray: None,
+                            });
+                        }
+                    }
+                }
+            }
             Plot::Survival(sp) => {
                 if sp.legend_label.is_some() {
                     use crate::render::palette::Palette;
@@ -7080,7 +7276,8 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
                 Plot::Scatter(_) | Plot::Line(_) | Plot::Series(_) |
                 Plot::Histogram(_) | Plot::Box(_) | Plot::Violin(_) |
                 Plot::Band(_) | Plot::Strip(_) | Plot::Density(_) |
-                Plot::Forest(_) | Plot::Raincloud(_) | Plot::Lollipop(_) | Plot::Survival(_) => {
+                Plot::Forest(_) | Plot::Raincloud(_) | Plot::Lollipop(_) | Plot::Survival(_) |
+                Plot::Slope(_) => {
                     plot.set_color(&palette[color_idx]);
                     color_idx += 1;
                 }
@@ -7385,6 +7582,9 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
             }
             Plot::Roc(r) => {
                 add_roc(r, &mut scene, &computed);
+            }
+            Plot::Slope(s) => {
+                add_slope(s, &mut scene, &computed);
             }
         }
     }

@@ -46,6 +46,7 @@ EXAMPLES=(
     raincloud
     ternary
     roc
+    slope
     twin_y
     all_plots_simple
     all_plots_complex

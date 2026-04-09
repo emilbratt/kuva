@@ -86,6 +86,9 @@ pub use crate::plot::{
     KMGroup,
     RocPlot,
     RocGroup,
+    SlopePlot,
+    SlopePoint,
+    SlopeValueFormat,
     // Style / config types used when building plots
     MarkerShape,
     LineStyle,
@@ -115,6 +118,7 @@ pub use crate::render::render::{
     render_survival,
     render_roc,
     render_jointplot,
+    render_slope,
 };
 
 // ── Figure (multi-plot grid) ─────────────────────────────────────────────────
