@@ -6230,6 +6230,209 @@ fn add_density(dp: &DensityPlot, computed: &ComputedLayout, scene: &mut Scene) {
     })));
 }
 
+fn add_ecdf(ep: &crate::plot::ecdf::EcdfPlot, computed: &ComputedLayout, scene: &mut Scene) {
+    use render_utils::{silverman_bandwidth, simple_kde};
+    use crate::render::palette::Palette;
+
+    if ep.groups.is_empty() { return; }
+
+    let cat10 = Palette::category10();
+
+    // ── Percentile reference lines (drawn first, under everything) ────────────
+    let plot_x1 = computed.margin_left;
+    let plot_x2 = computed.margin_left + computed.plot_width();
+    for &p in &ep.percentile_lines {
+        let y_val = if ep.complementary { 1.0 - p } else { p };
+        let py = computed.map_y(y_val);
+        scene.add(Primitive::Line {
+            x1: plot_x1, y1: py,
+            x2: plot_x2, y2: py,
+            stroke: Color::from("#888888"),
+            stroke_width: 0.8,
+            stroke_dasharray: Some("4,4".into()),
+        });
+        // Small percentage label at right edge
+        let pct_str = format!("{}%", (p * 100.0).round() as u32);
+        scene.add(Primitive::Text {
+            x: plot_x2 + 3.0,
+            y: py + computed.tick_size as f64 * 0.4,
+            content: pct_str,
+            size: computed.tick_size.saturating_sub(2).max(7),
+            anchor: TextAnchor::Start,
+            rotate: None,
+            bold: false,
+            color: Some(Color::from("#888888")),
+        });
+    }
+
+    for (i, group) in ep.groups.iter().enumerate() {
+        if group.data.is_empty() { continue; }
+
+        // Color resolution: explicit → single-group default → palette
+        let color_str = group.color.as_deref()
+            .unwrap_or_else(|| {
+                if ep.groups.len() == 1 { &ep.color } else { &cat10[i % cat10.len()] }
+            });
+        let color = Color::from(color_str);
+
+        let mut sorted = group.data.clone();
+        sorted.sort_by(|a, b| a.total_cmp(b));
+        let n = sorted.len();
+
+        // ── Confidence band (DKW 95%) ─────────────────────────────────────
+        if ep.show_confidence_band && n >= 2 {
+            let eps = ((2.0_f64.ln() - 0.05_f64.ln()) / (2.0 * n as f64)).sqrt();
+
+            // Build upper and lower step-function point lists
+            let mut upper: Vec<(f64, f64)> = Vec::with_capacity(n * 2 + 2);
+            let mut lower: Vec<(f64, f64)> = Vec::with_capacity(n * 2 + 2);
+
+            // Starting point before first jump
+            let px0 = computed.map_x(sorted[0]);
+            let (uy0, ly0) = if ep.complementary {
+                (computed.map_y(1.0_f64.min(1.0 + eps)), computed.map_y(0.0_f64.max(1.0 - eps)))
+            } else {
+                (computed.map_y(eps.min(1.0)), computed.map_y(0.0))
+            };
+            upper.push((px0, uy0));
+            lower.push((px0, ly0));
+
+            for (idx, &x) in sorted.iter().enumerate() {
+                let f = (idx + 1) as f64 / n as f64;
+                let (y_upper, y_lower) = if ep.complementary {
+                    ((1.0 - f + eps).min(1.0), (1.0 - f - eps).max(0.0))
+                } else {
+                    ((f + eps).min(1.0), (f - eps).max(0.0))
+                };
+                let px = computed.map_x(x);
+                // Horizontal then vertical (step)
+                upper.push((px, upper.last().unwrap().1));
+                upper.push((px, computed.map_y(y_upper)));
+                lower.push((px, lower.last().unwrap().1));
+                lower.push((px, computed.map_y(y_lower)));
+            }
+
+            // Build closed polygon: upper forward + lower reversed
+            let mut d = format!("M {},{}", round2(upper[0].0), round2(upper[0].1));
+            for &(x, y) in upper.iter().skip(1) {
+                d.push_str(&format!(" L {},{}", round2(x), round2(y)));
+            }
+            for &(x, y) in lower.iter().rev() {
+                d.push_str(&format!(" L {},{}", round2(x), round2(y)));
+            }
+            d.push_str(" Z");
+
+            scene.add(Primitive::Path(Box::new(PathData {
+                d,
+                fill: Some(color.clone()),
+                stroke: color.clone(),
+                stroke_width: 0.0,
+                opacity: Some(ep.band_alpha),
+                stroke_dasharray: None,
+            })));
+        }
+
+        // ── ECDF curve ────────────────────────────────────────────────────
+        if ep.smooth && n >= 2 {
+            // KDE-integrated smooth CDF
+            let bw = silverman_bandwidth(&sorted);
+            let norm = 1.0 / (n as f64 * bw * (2.0 * std::f64::consts::PI).sqrt());
+            let kde_pts = simple_kde(&sorted, bw, ep.smooth_samples);
+            let pdf: Vec<(f64, f64)> = kde_pts.into_iter().map(|(x, y)| (x, y * norm)).collect();
+
+            // Trapezoidal integration to get CDF
+            let m = pdf.len();
+            let mut cdf = vec![0.0f64; m];
+            for j in 1..m {
+                let dx = pdf[j].0 - pdf[j - 1].0;
+                cdf[j] = cdf[j - 1] + 0.5 * (pdf[j].1 + pdf[j - 1].1) * dx;
+            }
+            let total = cdf[m - 1].max(1e-12);
+
+            let pts: Vec<(f64, f64)> = pdf.iter().zip(cdf.iter())
+                .map(|(&(x, _), &c)| {
+                    let y = (c / total).clamp(0.0, 1.0);
+                    let y = if ep.complementary { 1.0 - y } else { y };
+                    (computed.map_x(x), computed.map_y(y))
+                })
+                .collect();
+
+            if !pts.is_empty() {
+                let mut d = format!("M {},{}", round2(pts[0].0), round2(pts[0].1));
+                for &(px, py) in pts.iter().skip(1) {
+                    d.push_str(&format!(" L {},{}", round2(px), round2(py)));
+                }
+                scene.add(Primitive::Path(Box::new(PathData {
+                    d,
+                    fill: None,
+                    stroke: color.clone(),
+                    stroke_width: ep.stroke_width,
+                    opacity: None,
+                    stroke_dasharray: ep.line_dash.clone(),
+                })));
+            }
+        } else {
+            // Right-continuous step function
+            let y_start = if ep.complementary { 1.0 } else { 0.0 };
+            let mut d = format!("M {},{}", round2(computed.map_x(sorted[0])), round2(computed.map_y(y_start)));
+
+            for (idx, &x) in sorted.iter().enumerate() {
+                let y_after = (idx + 1) as f64 / n as f64;
+                let y_val = if ep.complementary { 1.0 - y_after } else { y_after };
+                if idx > 0 {
+                    d.push_str(&format!(" H {}", round2(computed.map_x(x))));
+                }
+                d.push_str(&format!(" V {}", round2(computed.map_y(y_val))));
+            }
+
+            scene.add(Primitive::Path(Box::new(PathData {
+                d,
+                fill: None,
+                stroke: color.clone(),
+                stroke_width: ep.stroke_width,
+                opacity: None,
+                stroke_dasharray: ep.line_dash.clone(),
+            })));
+        }
+
+        // ── Markers at step endpoints ─────────────────────────────────────
+        if ep.show_markers {
+            for (idx, &x) in sorted.iter().enumerate() {
+                let y_val = (idx + 1) as f64 / n as f64;
+                let y_val = if ep.complementary { 1.0 - y_val } else { y_val };
+                scene.add(Primitive::Circle {
+                    cx: computed.map_x(x),
+                    cy: computed.map_y(y_val),
+                    r: ep.marker_size,
+                    fill: color.clone(),
+                    fill_opacity: None,
+                    stroke: None,
+                    stroke_width: None,
+                });
+            }
+        }
+
+        // ── Rug ticks at the bottom of the plot area (inside clip) ────────
+        if ep.show_rug {
+            // Draw upward from the x-axis line; each group offset so they stack
+            // without fully overlapping.
+            let y_bottom = computed.map_y(0.0);
+            let rug_offset = i as f64 * (ep.rug_height + 1.5);
+            for &x in &sorted {
+                let px = computed.map_x(x);
+                scene.add(Primitive::Line {
+                    x1: px, y1: y_bottom - rug_offset,
+                    x2: px, y2: y_bottom - rug_offset - ep.rug_height,
+                    stroke: color.clone(),
+                    stroke_width: 0.8,
+                    stroke_dasharray: None,
+                });
+            }
+        }
+    }
+}
+
+
 fn add_ridgeline(rp: &RidgelinePlot, computed: &ComputedLayout, scene: &mut Scene) {
     use render_utils::{silverman_bandwidth, simple_kde};
     use crate::render::palette::Palette;
@@ -7642,6 +7845,26 @@ pub fn collect_legend_entries(plots: &[Plot]) -> Vec<LegendEntry> {
                             color: mp.color_for_row_idx(i),
                             shape: LegendShape::Rect,
                             dasharray: None,
+                        });
+                    }
+                }
+            }
+            Plot::Ecdf(ep) => {
+                if ep.legend_label.is_some() {
+                    let cat10 = crate::render::palette::Palette::category10();
+                    for (i, group) in ep.groups.iter().enumerate() {
+                        let color = group.color.clone().unwrap_or_else(|| {
+                            if ep.groups.len() == 1 {
+                                ep.color.clone()
+                            } else {
+                                cat10[i % cat10.len()].to_string()
+                            }
+                        });
+                        entries.push(LegendEntry {
+                            label: group.label.clone(),
+                            color,
+                            shape: LegendShape::Line,
+                            dasharray: ep.line_dash.clone(),
                         });
                     }
                 }
@@ -9088,7 +9311,7 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
                 Plot::Band(_) | Plot::Strip(_) | Plot::Density(_) |
                 Plot::Forest(_) | Plot::Scatter3D(_) | Plot::Surface3D(_) |
                 Plot::Raincloud(_) | Plot::Lollipop(_) | Plot::Survival(_) |
-                Plot::Slope(_) => {
+                Plot::Slope(_) | Plot::Ecdf(_) => {
                     plot.set_color(&palette[color_idx]);
                     color_idx += 1;
                 }
@@ -9413,6 +9636,9 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
             Plot::Mosaic(mp) => {
                 add_mosaic(mp, &mut scene, &computed);
             }
+            Plot::Ecdf(ep) => {
+                add_ecdf(ep, &computed, &mut scene);
+            }
         }
     }
 
@@ -9429,6 +9655,7 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
             add_manhattan_chr_labels(m, &mut scene, &computed);
         }
     }
+
 
     // Check for DotPlot stacked legend (size legend + colorbar in one column)
     let dot_stacked = plots.iter().find_map(|p| {
@@ -9539,7 +9766,7 @@ pub fn render_twin_y(primary: Vec<Plot>, secondary: Vec<Plot>, layout: Layout) -
             match plot {
                 Plot::Scatter(_) | Plot::Line(_) | Plot::Series(_) |
                 Plot::Histogram(_) | Plot::Box(_) | Plot::Violin(_) | Plot::Band(_) |
-                Plot::Strip(_) | Plot::Density(_) => {
+                Plot::Strip(_) | Plot::Density(_) | Plot::Ecdf(_) => {
                     plot.set_color(&palette[color_idx]);
                     color_idx += 1;
                 }
@@ -9596,6 +9823,7 @@ pub fn render_twin_y(primary: Vec<Plot>, secondary: Vec<Plot>, layout: Layout) -
             Plot::Raincloud(r)   => add_raincloud(r, &mut scene, &computed),
             Plot::Lollipop(lp)   => add_lollipop(lp, &mut scene, &computed),
             Plot::Survival(sp)   => add_survival(sp, &mut scene, &computed),
+            Plot::Ecdf(ep)       => add_ecdf(ep, &computed, &mut scene),
             _ => {}
         }
     }
@@ -9617,6 +9845,7 @@ pub fn render_twin_y(primary: Vec<Plot>, secondary: Vec<Plot>, layout: Layout) -
             Plot::Raincloud(r)   => add_raincloud(r, &mut scene, &computed_y2),
             Plot::Lollipop(lp)   => add_lollipop(lp, &mut scene, &computed_y2),
             Plot::Survival(sp)   => add_survival(sp, &mut scene, &computed_y2),
+            Plot::Ecdf(ep)       => add_ecdf(ep, &computed_y2, &mut scene),
             _ => {}
         }
     }

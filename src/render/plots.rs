@@ -24,6 +24,7 @@ use crate::plot::sankey::SankeyPlot;
 use crate::plot::phylo::PhyloTree;
 use crate::plot::synteny::SyntenyPlot;
 use crate::plot::density::DensityPlot;
+use crate::plot::ecdf::EcdfPlot;
 use crate::plot::ridgeline::RidgelinePlot;
 use crate::plot::polar::PolarPlot;
 use crate::plot::ternary::TernaryPlot;
@@ -89,6 +90,7 @@ pub enum Plot {
     Venn(VennPlot),
     Parallel(ParallelPlot),
     Mosaic(MosaicPlot),
+    Ecdf(EcdfPlot),
 }
 
 impl From<ScatterPlot>    for Plot { fn from(p: ScatterPlot)    -> Self { Plot::Scatter(p) } }
@@ -134,6 +136,7 @@ impl From<SlopePlot>     for Plot { fn from(p: SlopePlot)     -> Self { Plot::Sl
 impl From<VennPlot>        for Plot { fn from(p: VennPlot)        -> Self { Plot::Venn(p) } }
 impl From<ParallelPlot>    for Plot { fn from(p: ParallelPlot)    -> Self { Plot::Parallel(p) } }
 impl From<MosaicPlot>      for Plot { fn from(p: MosaicPlot)      -> Self { Plot::Mosaic(p) } }
+impl From<EcdfPlot>        for Plot { fn from(p: EcdfPlot)        -> Self { Plot::Ecdf(p) } }
 
 use crate::plot::plot3d::DataRanges3D;
 use crate::plot::heatmap::ColorMap;
@@ -211,6 +214,7 @@ impl Plot {
             Plot::Roc(r) => r.color = color.into(),
             Plot::Slope(s) => s.color = color.into(),
             Plot::Parallel(p) => p.color = color.into(),
+            Plot::Ecdf(e) => e.color = color.into(),
             _ => {}
         }
     }
@@ -755,6 +759,20 @@ impl Plot {
             Plot::Parallel(_) => Some(((-1.0, 1.0), (-1.0, 1.0))),
             // Pixel-space plot — no axis bounds needed
             Plot::Mosaic(_) => None,
+            Plot::Ecdf(ep) => {
+                if ep.groups.is_empty() { return None; }
+                let mut x_min = f64::INFINITY;
+                let mut x_max = f64::NEG_INFINITY;
+                for group in &ep.groups {
+                    for &v in &group.data {
+                        x_min = x_min.min(v);
+                        x_max = x_max.max(v);
+                    }
+                }
+                if !x_min.is_finite() { return None; }
+                // y is always [0, 1] for ECDF / CCDF
+                Some(((x_min, x_max), (0.0, 1.0)))
+            }
         }
     }
 
@@ -812,6 +830,12 @@ impl Plot {
                 let nc = mp.effective_col_order().len();
                 let nr = mp.effective_row_order().len();
                 nc * nr * 2 + nc + nr + 30
+            }
+            Plot::Ecdf(ep) => {
+                let n: usize = ep.groups.iter().map(|g| g.data.len()).sum();
+                let band = if ep.show_confidence_band { n * 4 } else { 0 };
+                let rug = if ep.show_rug { n } else { 0 };
+                ep.groups.len() * 2 + n * 2 + band + rug + 20
             }
             _ => 100,
         }

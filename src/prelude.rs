@@ -60,6 +60,8 @@ pub use crate::plot::{
     SyntenySequence,
     Strand,
     DensityPlot,
+    EcdfPlot,
+    EcdfGroup,
     RidgelinePlot,
     RidgelineGroup,
     PolarPlot,

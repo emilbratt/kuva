@@ -455,6 +455,33 @@ check "density x-range bounded" \
         --x-label "Expression" --y-label "Density" \
         --title "Density bounded range"
 
+# ── ecdf ──────────────────────────────────────────────────────────────────────
+check "ecdf basic" \
+    "$BIN" ecdf "$DATA/samples.tsv" \
+        --value expression --x-label "Expression" --y-label "F(x)" \
+        --title "ECDF"
+
+check "ecdf color-by with confidence band" \
+    "$BIN" ecdf "$DATA/samples.tsv" \
+        --value expression --color-by group --confidence-band \
+        --title "ECDF by group"
+
+check "ecdf complementary with rug" \
+    "$BIN" ecdf "$DATA/samples.tsv" \
+        --value expression --complementary --rug \
+        --x-label "Expression" --y-label "1 - F(x)" \
+        --title "CCDF with rug"
+
+check "ecdf percentile lines and markers" \
+    "$BIN" ecdf "$DATA/samples.tsv" \
+        --value expression --percentile-lines 0.25,0.5,0.75 --markers \
+        --title "ECDF with percentiles"
+
+check "ecdf smooth" \
+    "$BIN" ecdf "$DATA/samples.tsv" \
+        --value expression --color-by group --smooth \
+        --title "Smooth ECDF"
+
 # ── ridgeline ─────────────────────────────────────────────────────────────────
 check "ridgeline basic" \
     "$BIN" ridgeline "$DATA/samples.tsv" \

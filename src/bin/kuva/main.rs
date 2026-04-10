@@ -24,6 +24,7 @@ mod sankey;
 mod phylo;
 mod synteny;
 mod density;
+mod ecdf;
 mod ridgeline;
 mod polar;
 mod ternary;
@@ -72,6 +73,8 @@ enum Commands {
     Synteny(synteny::SyntenyArgs),
     #[command(name = "density")]
     Density(density::DensityArgs),
+    #[command(name = "ecdf")]
+    Ecdf(ecdf::EcdfArgs),
     #[command(name = "ridgeline")]
     Ridgeline(ridgeline::RidgelineArgs),
     Polar(polar::PolarArgs),
@@ -121,6 +124,7 @@ fn main() {
         Commands::Phylo(args) => phylo::run(args),
         Commands::Synteny(args) => synteny::run(args),
         Commands::Density(args) => density::run(args),
+        Commands::Ecdf(args) => ecdf::run(args),
         Commands::Ridgeline(args) => ridgeline::run(args),
         Commands::Polar(args) => polar::run(args),
         Commands::Ternary(args) => ternary::run(args),
