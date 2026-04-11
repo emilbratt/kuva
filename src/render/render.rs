@@ -1828,6 +1828,37 @@ fn add_brickplot_notations(brickplot: &BrickPlot, scene: &mut Scene, computed: &
             runs.push(Run { letter: rl, count: run_count, x_start: run_start_x, x_end: cum_x });
         }
 
+        // Density check: if all label text laid end-to-end exceeds 2× the plot width,
+        // the locus is too complex for per-block labels (e.g. SCA31 expansions with
+        // hundreds of copies). Suppress individual labels and show a single fallback.
+        let plot_px = computed.plot_width();
+        let labelable: Vec<String> = runs.iter()
+            .filter(|r| r.letter != '@')
+            .filter_map(|r| {
+                motifs_map.get(&r.letter).map(|k| format!("({}){}", k, r.count))
+            })
+            .collect();
+        let total_label_px: f64 = labelable.iter()
+            .map(|l| l.len() as f64 * font_px * 0.56)
+            .sum();
+
+        if total_label_px > plot_px * 2.0 {
+            let cx = computed.margin_left + plot_px / 2.0;
+            scene.add(Primitive::Text {
+                x: cx,
+                y: y_top_px - 2.0 - 0.5 * line_h,
+                content: "complex structure: see TSV".to_string(),
+                size: label_size,
+                anchor: TextAnchor::Middle,
+                rotate: None,
+                bold: false,
+                color: None,
+            });
+            continue;
+        }
+
+        let plot_left_px  = computed.margin_left;
+        let plot_right_px = computed.width - computed.margin_right;
         let mut last_right: [f64; N_TIERS] = [f64::NEG_INFINITY; N_TIERS];
 
         for run in &runs {
@@ -1839,15 +1870,21 @@ fn add_brickplot_notations(brickplot: &BrickPlot, scene: &mut Scene, computed: &
             let label = format!("({}){}", kmer, run.count);
             let center_px = computed.map_x((run.x_start + run.x_end) / 2.0 - eff_offset);
             let text_half_w = label.len() as f64 * font_px * 0.28;
-            let left_px  = center_px - text_half_w;
-            let right_px = center_px + text_half_w;
+
+            // Clamp so the label never overflows onto y-axis content or past the right edge.
+            let clamped_center = center_px
+                .max(plot_left_px + text_half_w + 2.0)
+                .min(plot_right_px - text_half_w - 2.0);
+
+            let left_px  = clamped_center - text_half_w;
+            let right_px = clamped_center + text_half_w;
 
             let chosen = (0..N_TIERS).find(|&t| left_px > last_right[t]).unwrap_or(0);
             last_right[chosen] = right_px;
 
             let y_text = y_top_px - 2.0 - (chosen as f64 + 0.5) * line_h;
             scene.add(Primitive::Text {
-                x: center_px,
+                x: clamped_center,
                 y: y_text,
                 content: label,
                 size: label_size,

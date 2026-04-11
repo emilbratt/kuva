@@ -519,11 +519,12 @@ pub fn add_labels_and_title(scene: &mut Scene, computed: &ComputedLayout, layout
         }
     }
 
-    // Title
+    // Title — use title_y (derived from the base margin before notation tiers are added)
+    // so that BrickPlot notation labels don't push the title into the annotation zone.
     if let Some(title) = &layout.title {
         scene.add(Primitive::Text {
             x: computed.margin_left + computed.plot_width() / 2.0,
-            y: computed.margin_top / 2.0,
+            y: computed.title_y,
             content: title.clone(),
             size: computed.title_size,
             anchor: TextAnchor::Middle,

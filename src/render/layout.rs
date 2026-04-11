@@ -447,8 +447,10 @@ impl Layout {
                 y_labels = Some(labels);
                 has_legend = true;
                 if let Some(ref motifs) = bp.motifs {
+                    // +1 when mark_primary is set: the primary entry gets a trailing '*'
+                    let mark_bonus = if bp.mark_primary { 1 } else { 0 };
                     for v in motifs.values() {
-                        max_label_len = max_label_len.max(v.len());
+                        max_label_len = max_label_len.max(v.len() + mark_bonus);
                     }
                 }
                 // Reserve vertical space for per-block notation labels when enabled.
@@ -854,7 +856,7 @@ impl Layout {
 
         if has_legend {
             layout = layout.with_show_legend();
-            let dynamic_width = max_label_len as f64 * 7.2 + 35.0;
+            let dynamic_width = max_label_len as f64 * 8.0 + 40.0;
             layout.legend_width = dynamic_width.max(80.0);
 
             // Position legend die face needs 3 cells wide — ensure legend_width fits.
@@ -1523,6 +1525,9 @@ pub struct ComputedLayout {
     pub dice_x_label_pos: Option<(f64, f64)>,
     /// Override y-axis label position (x, y_centre, rotated) for DicePlot.
     pub dice_y_label_pos: Option<(f64, f64)>,
+    /// Y position for the plot title, computed from the pre-notation base margin so that
+    /// BrickPlot notation tiers don't push the title into the middle of the annotation zone.
+    pub title_y: f64,
 }
 
 impl ComputedLayout {
@@ -1534,17 +1539,23 @@ impl ComputedLayout {
         // Compute tick mark length early — needed for margin_left and tick_label_margin.
         let tick_mark_major_px = layout.tick_length.map(|l| l * s).unwrap_or(5.0 * s);
 
-        // Top: title height + padding, or small padding if no title
-        let mut margin_top = if layout.title.is_some() {
+        // Top: title height + padding, or small padding if no title.
+        // Compute the base margin first (title + padding only), then add notation tiers on top.
+        // title_y uses the base margin so that notation tiers don't push the title downward
+        // into the middle of the per-block label zone.
+        let base_margin_top = if layout.title.is_some() {
             title_size + label_size + 12.0 * s
         } else {
             10.0 * s
         };
+        let title_y = base_margin_top / 2.0;
+        let mut margin_top = base_margin_top;
         // BrickPlot per-block notation labels are drawn above the top row.
-        // Reserve N_TIERS * line_height extra pixels so labels are never clipped.
+        // Reserve (N_TIERS + 0.5) * line_height extra pixels so labels — including the
+        // ascenders of the topmost tier — are never clipped by the canvas edge or title.
         if layout.brick_notation_tiers > 0 {
             let body = layout.body_size as f64 * s;
-            margin_top += layout.brick_notation_tiers as f64 * body * 1.1 + 4.0 * s;
+            margin_top += (layout.brick_notation_tiers as f64 + 0.5) * body * 1.1 + 4.0 * s;
         }
         // Bottom: tick_mark + gap(5) + tick_label + gap(5) + axis_label + padding(10)
         // When ticks are suppressed AND no rotation is requested (e.g. pure numeric axes),
@@ -1848,6 +1859,7 @@ impl ComputedLayout {
             equal_aspect: layout.equal_aspect,
             dice_x_label_pos: None,
             dice_y_label_pos: None,
+            title_y,
         };
         s.recompute_transforms();
         s
