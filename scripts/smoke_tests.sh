@@ -604,12 +604,12 @@ check "surface3d alternate view" \
 # ── qq ───────────────────────────────────────────────────────────────────────
 check "qq normal basic" \
     "$BIN" qq "$DATA/samples.tsv" \
-        --value value \
+        --value expression \
         --title "Normal Q-Q"
 
 check "qq normal multigroup" \
     "$BIN" qq "$DATA/samples.tsv" \
-        --value value --color-by group \
+        --value expression --color-by group \
         --title "Multi-group Normal Q-Q"
 
 check "qq genomic basic" \
@@ -621,6 +621,26 @@ check "qq genomic with ci band and lambda" \
     "$BIN" qq "$DATA/gene_stats.tsv" \
         --value pvalue --genomic --ci-band --lambda \
         --title "Genomic Q-Q with CI and lambda"
+
+# ── streamgraph ───────────────────────────────────────────────────────────────
+check "streamgraph wiggle (default)" \
+    "$BIN" streamgraph "$DATA/streamgraph.tsv" \
+        --title "Microbiome streamgraph"
+
+check "streamgraph symmetric" \
+    "$BIN" streamgraph "$DATA/streamgraph.tsv" \
+        --baseline symmetric \
+        --title "Symmetric streamgraph"
+
+check "streamgraph normalized" \
+    "$BIN" streamgraph "$DATA/streamgraph.tsv" \
+        --normalize \
+        --title "Normalised streamgraph"
+
+check "streamgraph linear with stroke" \
+    "$BIN" streamgraph "$DATA/streamgraph.tsv" \
+        --linear --stroke \
+        --title "Linear streamgraph"
 
 # ── interactive ───────────────────────────────────────────────────────────────
 check "scatter interactive" \

@@ -502,6 +502,15 @@ impl Layout {
                 }
             }
 
+            if let Plot::Streamgraph(sg) = plot {
+                if sg.legend_label.is_some() {
+                    for label in sg.labels.iter().flatten() {
+                        has_legend = true;
+                        max_label_len = max_label_len.max(label.len());
+                    }
+                }
+            }
+
             if let Plot::DicePlot(dp) = plot {
                 x_labels = Some(dp.x_categories.clone());
                 // Reverse so y_cat[0] appears at the TOP
@@ -1334,8 +1343,9 @@ impl Layout {
                 Plot::Strip(p)       => if let Some(l) = &p.legend_label { max_secondary_label = max_secondary_label.max(l.len()); }
                 Plot::Waterfall(p)   => if let Some(l) = &p.legend_label { max_secondary_label = max_secondary_label.max(l.len()); }
                 Plot::Candlestick(p) => if let Some(l) = &p.legend_label { max_secondary_label = max_secondary_label.max(l.len()); }
-                Plot::StackedArea(p) => for l in p.labels.iter().flatten() { max_secondary_label = max_secondary_label.max(l.len()); }
-                Plot::Bar(p)         => if let Some(ll) = &p.legend_label { for l in ll { max_secondary_label = max_secondary_label.max(l.len()); } }
+                Plot::StackedArea(p)  => for l in p.labels.iter().flatten() { max_secondary_label = max_secondary_label.max(l.len()); }
+                Plot::Streamgraph(p)  => for l in p.labels.iter().flatten() { max_secondary_label = max_secondary_label.max(l.len()); }
+                Plot::Bar(p)          => if let Some(ll) = &p.legend_label { for l in ll { max_secondary_label = max_secondary_label.max(l.len()); } }
                 _ => {}
             }
         }

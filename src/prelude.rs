@@ -106,6 +106,9 @@ pub use crate::plot::{
     QQPlot,
     QQGroup,
     QQMode,
+    StreamgraphPlot,
+    StreamBaseline,
+    StreamOrder,
     // Style / config types used when building plots
     MarkerShape,
     LineStyle,

@@ -43,6 +43,7 @@ use crate::plot::venn::VennPlot;
 use crate::plot::parallel::ParallelPlot;
 use crate::plot::mosaic::MosaicPlot;
 use crate::plot::qq::QQPlot;
+use crate::plot::streamgraph::StreamgraphPlot;
 use crate::plot::legend::ColorBarInfo;
 use crate::render::render_utils;
 
@@ -93,6 +94,7 @@ pub enum Plot {
     Mosaic(MosaicPlot),
     Ecdf(EcdfPlot),
     QQ(QQPlot),
+    Streamgraph(StreamgraphPlot),
 }
 
 impl From<ScatterPlot>    for Plot { fn from(p: ScatterPlot)    -> Self { Plot::Scatter(p) } }
@@ -140,6 +142,7 @@ impl From<ParallelPlot>    for Plot { fn from(p: ParallelPlot)    -> Self { Plot
 impl From<MosaicPlot>      for Plot { fn from(p: MosaicPlot)      -> Self { Plot::Mosaic(p) } }
 impl From<EcdfPlot>        for Plot { fn from(p: EcdfPlot)        -> Self { Plot::Ecdf(p) } }
 impl From<QQPlot>          for Plot { fn from(p: QQPlot)          -> Self { Plot::QQ(p) } }
+impl From<StreamgraphPlot> for Plot { fn from(p: StreamgraphPlot) -> Self { Plot::Streamgraph(p) } }
 
 use crate::plot::plot3d::DataRanges3D;
 use crate::plot::heatmap::ColorMap;
@@ -219,7 +222,7 @@ impl Plot {
             Plot::Parallel(p) => p.color = color.into(),
             Plot::Ecdf(e) => e.color = color.into(),
             Plot::QQ(q) => q.color = color.into(),
-            _ => {}
+            _ => {}  // multi-series plots (StackedArea, Streamgraph, etc.) skip palette auto-assign
         }
     }
 
@@ -814,6 +817,16 @@ impl Plot {
                     }
                 }
             }
+            Plot::Streamgraph(sg) => {
+                let geom = sg.compute_geometry()?;
+                let x_min = sg.x.iter().cloned().fold(f64::INFINITY, f64::min);
+                let x_max = sg.x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let y_min = geom.baseline.iter().cloned().fold(f64::INFINITY, f64::min);
+                let y_max = geom.uppers.last()
+                    .map(|u| u.iter().cloned().fold(f64::NEG_INFINITY, f64::max))
+                    .unwrap_or(0.0);
+                Some(((x_min, x_max), (y_min, y_max)))
+            }
         }
     }
 
@@ -882,6 +895,9 @@ impl Plot {
                 let n: usize = qp.groups.iter().map(|g| g.data.len()).sum();
                 let band = if qp.show_ci_band { n * 4 } else { 0 };
                 qp.groups.len() * 2 + n + band + 20
+            }
+            Plot::Streamgraph(sg) => {
+                sg.series.len() * (sg.x.len() * 3 + 2) + 20
             }
             _ => 100,
         }

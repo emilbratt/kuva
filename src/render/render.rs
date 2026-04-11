@@ -8105,6 +8105,20 @@ pub fn collect_legend_entries(plots: &[Plot]) -> Vec<LegendEntry> {
                     }
                 }
             }
+            Plot::Streamgraph(sg) => {
+                if sg.legend_label.is_some() {
+                    for k in 0..sg.series.len() {
+                        if let Some(Some(ref label)) = sg.labels.get(k) {
+                            entries.push(LegendEntry {
+                                label: label.clone(),
+                                color: sg.resolve_color(k).to_string(),
+                                shape: LegendShape::Rect,
+                                dasharray: None,
+                            });
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -8604,6 +8618,279 @@ fn add_stacked_area(sa: &StackedAreaPlot, scene: &mut Scene, computed: &Computed
 
         // Advance lower to current upper for the next series
         lower[..n].copy_from_slice(&upper[..n]);
+    }
+}
+
+// ── Streamgraph ───────────────────────────────────────────────────────────────
+
+/// Build a Catmull-Rom smooth closed SVG path for a stream band.
+///
+/// `upper_px` and `lower_px` are parallel slices of (pixel_x, pixel_y) pairs,
+/// where `upper_px` goes left→right and `lower_px` goes left→right.
+/// The returned path travels upper left→right then lower right→left and closes.
+fn stream_band_path(upper_px: &[(f64, f64)], lower_px: &[(f64, f64)]) -> String {
+    let n = upper_px.len();
+    if n == 0 { return String::new(); }
+
+    let mut rb = ryu::Buffer::new();
+    let mut path = String::with_capacity(n * 60);
+
+    // Helper: append Catmull-Rom cubic bezier segment to path
+    // P0=prev, P1=curr, P2=next, P3=after — produces one C command from P1→P2
+    let append_cr = |path: &mut String,
+                         p0: (f64, f64),
+                         p1: (f64, f64),
+                         p2: (f64, f64),
+                         p3: (f64, f64),
+                         rb: &mut ryu::Buffer| {
+        let cp1x = p1.0 + (p2.0 - p0.0) / 6.0;
+        let cp1y = p1.1 + (p2.1 - p0.1) / 6.0;
+        let cp2x = p2.0 - (p3.0 - p1.0) / 6.0;
+        let cp2y = p2.1 - (p3.1 - p1.1) / 6.0;
+        path.push_str("C ");
+        path.push_str(rb.format(round2(cp1x))); path.push(' ');
+        path.push_str(rb.format(round2(cp1y))); path.push(' ');
+        path.push_str(rb.format(round2(cp2x))); path.push(' ');
+        path.push_str(rb.format(round2(cp2y))); path.push(' ');
+        path.push_str(rb.format(round2(p2.0))); path.push(' ');
+        path.push_str(rb.format(round2(p2.1))); path.push(' ');
+    };
+
+    // Move to first upper point
+    path.push_str("M ");
+    path.push_str(rb.format(round2(upper_px[0].0))); path.push(' ');
+    path.push_str(rb.format(round2(upper_px[0].1))); path.push(' ');
+
+    if n == 1 {
+        // Single point — degenerate; just close
+        path.push('Z');
+        return path;
+    }
+
+    // Forward along upper edge
+    for i in 0..n - 1 {
+        let p0 = if i == 0     { upper_px[0] }     else { upper_px[i - 1] };
+        let p1 = upper_px[i];
+        let p2 = upper_px[i + 1];
+        let p3 = if i + 2 < n  { upper_px[i + 2] } else { upper_px[n - 1] };
+        append_cr(&mut path, p0, p1, p2, p3, &mut rb);
+    }
+
+    // Connect to last lower point
+    path.push_str("L ");
+    path.push_str(rb.format(round2(lower_px[n - 1].0))); path.push(' ');
+    path.push_str(rb.format(round2(lower_px[n - 1].1))); path.push(' ');
+
+    // Backward along lower edge
+    for i in (0..n - 1).rev() {
+        let p0 = if i + 2 < n  { lower_px[i + 2] } else { lower_px[n - 1] };
+        let p1 = lower_px[i + 1];
+        let p2 = lower_px[i];
+        let p3 = if i == 0     { lower_px[0] }     else { lower_px[i - 1] };
+        append_cr(&mut path, p0, p1, p2, p3, &mut rb);
+    }
+
+    path.push('Z');
+    path
+}
+
+/// Build a Catmull-Rom stroke path (upper edge only, open).
+fn stream_stroke_path(pts: &[(f64, f64)]) -> String {
+    let n = pts.len();
+    if n == 0 { return String::new(); }
+
+    let mut rb = ryu::Buffer::new();
+    let mut path = String::with_capacity(n * 30);
+
+    path.push_str("M ");
+    path.push_str(rb.format(round2(pts[0].0))); path.push(' ');
+    path.push_str(rb.format(round2(pts[0].1))); path.push(' ');
+
+    for i in 0..n - 1 {
+        let p0 = if i == 0     { pts[0] }     else { pts[i - 1] };
+        let p1 = pts[i];
+        let p2 = pts[i + 1];
+        let p3 = if i + 2 < n  { pts[i + 2] } else { pts[n - 1] };
+        let cp1x = p1.0 + (p2.0 - p0.0) / 6.0;
+        let cp1y = p1.1 + (p2.1 - p0.1) / 6.0;
+        let cp2x = p2.0 - (p3.0 - p1.0) / 6.0;
+        let cp2y = p2.1 - (p3.1 - p1.1) / 6.0;
+        path.push_str("C ");
+        path.push_str(rb.format(round2(cp1x))); path.push(' ');
+        path.push_str(rb.format(round2(cp1y))); path.push(' ');
+        path.push_str(rb.format(round2(cp2x))); path.push(' ');
+        path.push_str(rb.format(round2(cp2y))); path.push(' ');
+        path.push_str(rb.format(round2(p2.0))); path.push(' ');
+        path.push_str(rb.format(round2(p2.1))); path.push(' ');
+    }
+    path
+}
+
+fn add_streamgraph(
+    sg: &crate::plot::streamgraph::StreamgraphPlot,
+    scene: &mut Scene,
+    computed: &ComputedLayout,
+) {
+    let geom = match sg.compute_geometry() {
+        Some(g) => g,
+        None => return,
+    };
+
+    let n_pts = sg.x.len();
+    let n_streams = geom.render_order.len();
+
+    for k in 0..n_streams {
+        let orig_idx = geom.render_order[k];
+        let color = sg.resolve_color(orig_idx).to_string();
+
+        // Build pixel-space point arrays
+        let upper_px: Vec<(f64, f64)> = (0..n_pts).map(|i| {
+            (computed.map_x(sg.x[i]), computed.map_y(geom.uppers[k][i]))
+        }).collect();
+        let lower_px: Vec<(f64, f64)> = (0..n_pts).map(|i| {
+            (computed.map_x(sg.x[i]), computed.map_y(geom.lowers[k][i]))
+        }).collect();
+
+        // Filled band
+        let path_d = if sg.smooth {
+            stream_band_path(&upper_px, &lower_px)
+        } else {
+            // Linear path
+            let mut d = String::with_capacity(n_pts * 32);
+            let mut rb = ryu::Buffer::new();
+            for (i, &(px, py)) in upper_px.iter().enumerate() {
+                d.push(if i == 0 { 'M' } else { 'L' });
+                d.push(' ');
+                d.push_str(rb.format(round2(px))); d.push(' ');
+                d.push_str(rb.format(round2(py))); d.push(' ');
+            }
+            for &(px, py) in lower_px.iter().rev() {
+                d.push_str("L ");
+                d.push_str(rb.format(round2(px))); d.push(' ');
+                d.push_str(rb.format(round2(py))); d.push(' ');
+            }
+            d.push('Z');
+            d
+        };
+
+        scene.add(Primitive::Path(Box::new(PathData {
+            d: path_d,
+            fill: Some(Color::from(&color)),
+            stroke: "none".into(),
+            stroke_width: 0.0,
+            opacity: Some(sg.fill_opacity),
+            stroke_dasharray: None,
+        })));
+
+        // Optional inter-stream stroke along the upper edge
+        if sg.stroke_between {
+            let stroke_d = if sg.smooth {
+                stream_stroke_path(&upper_px)
+            } else {
+                let mut d = String::with_capacity(n_pts * 20);
+                let mut rb = ryu::Buffer::new();
+                for (i, &(px, py)) in upper_px.iter().enumerate() {
+                    d.push(if i == 0 { 'M' } else { 'L' });
+                    d.push(' ');
+                    d.push_str(rb.format(round2(px))); d.push(' ');
+                    d.push_str(rb.format(round2(py))); d.push(' ');
+                }
+                d
+            };
+            scene.add(Primitive::Path(Box::new(PathData {
+                d: stroke_d,
+                fill: None,
+                stroke: "white".into(),
+                stroke_width: sg.stroke_width,
+                opacity: None,
+                stroke_dasharray: None,
+            })));
+        }
+    }
+
+    // Inline stream labels — drawn on top after all fills
+    if sg.show_labels {
+        for k in 0..n_streams {
+            let orig_idx = geom.render_order[k];
+            let label = match sg.labels.get(orig_idx).and_then(|l| l.as_ref()) {
+                Some(l) => l.clone(),
+                None => continue,
+            };
+
+            let font_size = computed.body_size as f64;
+            // Estimated half-width of the label (middle-anchored).
+            let half_text_w = label.len() as f64 * font_size * 0.60 / 2.0 + 4.0;
+            let plot_left_px  = computed.margin_left;
+            let plot_right_px = computed.width - computed.margin_right;
+
+            // Minimum band height (px) for the label to fit vertically.
+            let min_h = (font_size * 1.3 + 4.0).max(sg.min_label_height);
+
+            // Exclude the first and last data points (stream has no fill there),
+            // and restrict to the inner 80 % of the x range so labels are never
+            // placed near the tapering edges where the band may shift away
+            // from the label y level.
+            let inner_lo = (n_pts as f64 * 0.10).ceil() as usize;
+            let inner_hi = (n_pts as f64 * 0.90).floor() as usize;
+            let search_start = inner_lo.max(if n_pts > 2 { 1 } else { 0 });
+            let search_end   = inner_hi.min(if n_pts > 2 { n_pts - 1 } else { n_pts });
+
+            // Pick the index with the tallest band in that window.
+            let max_idx_opt = (search_start..search_end).max_by(|&a, &b| {
+                let ha = geom.uppers[k][a] - geom.lowers[k][a];
+                let hb = geom.uppers[k][b] - geom.lowers[k][b];
+                ha.partial_cmp(&hb).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let max_idx = match max_idx_opt { Some(i) => i, None => continue };
+
+            let lower_y = computed.map_y(geom.lowers[k][max_idx]);
+            let upper_y = computed.map_y(geom.uppers[k][max_idx]);
+            let height_px = (lower_y - upper_y).abs();
+            if height_px < min_h { continue; }
+
+            // Place label at that x, then clamp so it stays within plot bounds.
+            let raw_x = computed.map_x(sg.x[max_idx]);
+            let mid_x = raw_x
+                .max(plot_left_px  + half_text_w)
+                .min(plot_right_px - half_text_w);
+            let mid_y = (lower_y + upper_y) / 2.0 + font_size * 0.35;
+
+            // Choose text color: white for dark fills, dark for light
+            let txt_color = choose_label_color(sg.resolve_color(orig_idx));
+
+            scene.add(Primitive::Text {
+                x: mid_x,
+                y: mid_y,
+                content: label,
+                size: computed.body_size,
+                color: Some(Color::from(txt_color)),
+                anchor: TextAnchor::Middle,
+                bold: false,
+                rotate: None,
+            });
+        }
+    }
+}
+
+/// Return a contrasting text color (white or near-black) for a CSS fill color.
+fn choose_label_color(css: &str) -> &'static str {
+    // Parse approximate luminance from well-known colors; default to white
+    let dark_fills = [
+        "steelblue", "cornflowerblue", "mediumpurple", "orchid",
+        "peru", "tomato", "coral", "goldenrod",
+        "mediumseagreen", "lightslategray",
+    ];
+    if dark_fills.contains(&css) {
+        "white"
+    } else if css.starts_with('#') && css.len() == 7 {
+        // Rough luminance from hex
+        let r = u8::from_str_radix(&css[1..3], 16).unwrap_or(128) as f64;
+        let g = u8::from_str_radix(&css[3..5], 16).unwrap_or(128) as f64;
+        let b = u8::from_str_radix(&css[5..7], 16).unwrap_or(128) as f64;
+        let lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        if lum < 140.0 { "white" } else { "#333333" }
+    } else {
+        "white"
     }
 }
 
@@ -9878,6 +10165,9 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
             Plot::QQ(qp) => {
                 add_qqplot(qp, &computed, &mut scene);
             }
+            Plot::Streamgraph(sg) => {
+                add_streamgraph(sg, &mut scene, &computed);
+            }
         }
     }
 
@@ -10062,31 +10352,33 @@ pub fn render_twin_y(primary: Vec<Plot>, secondary: Vec<Plot>, layout: Layout) -
             Plot::Raincloud(r)   => add_raincloud(r, &mut scene, &computed),
             Plot::Lollipop(lp)   => add_lollipop(lp, &mut scene, &computed),
             Plot::Survival(sp)   => add_survival(sp, &mut scene, &computed),
-            Plot::Ecdf(ep)       => add_ecdf(ep, &computed, &mut scene),
-            Plot::QQ(qp)         => add_qqplot(qp, &computed, &mut scene),
+            Plot::Ecdf(ep)         => add_ecdf(ep, &computed, &mut scene),
+            Plot::QQ(qp)           => add_qqplot(qp, &computed, &mut scene),
+            Plot::Streamgraph(sg)  => add_streamgraph(sg, &mut scene, &computed),
             _ => {}
         }
     }
     for plot in secondary.iter() {
         match plot {
-            Plot::Scatter(s)     => add_scatter(s, &mut scene, &computed_y2),
-            Plot::Line(l)        => add_line(l, &mut scene, &computed_y2),
-            Plot::Series(s)      => add_series(s, &mut scene, &computed_y2),
-            Plot::Band(b)        => add_band(b, &mut scene, &computed_y2),
-            Plot::Bar(b)         => add_bar(b, &mut scene, &computed_y2),
-            Plot::Histogram(h)   => add_histogram(h, &mut scene, &computed_y2),
-            Plot::Box(b)         => add_boxplot(b, &mut scene, &computed_y2),
-            Plot::Violin(v)      => add_violin(v, &mut scene, &computed_y2),
-            Plot::Strip(s)       => add_strip(s, &mut scene, &computed_y2),
-            Plot::Density(d)     => add_density(d, &computed_y2, &mut scene),
-            Plot::StackedArea(s) => add_stacked_area(s, &mut scene, &computed_y2),
-            Plot::Waterfall(w)   => add_waterfall(w, &mut scene, &computed_y2),
-            Plot::Candlestick(c) => add_candlestick(c, &mut scene, &computed_y2),
-            Plot::Raincloud(r)   => add_raincloud(r, &mut scene, &computed_y2),
-            Plot::Lollipop(lp)   => add_lollipop(lp, &mut scene, &computed_y2),
-            Plot::Survival(sp)   => add_survival(sp, &mut scene, &computed_y2),
-            Plot::Ecdf(ep)       => add_ecdf(ep, &computed_y2, &mut scene),
-            Plot::QQ(qp)         => add_qqplot(qp, &computed_y2, &mut scene),
+            Plot::Scatter(s)       => add_scatter(s, &mut scene, &computed_y2),
+            Plot::Line(l)          => add_line(l, &mut scene, &computed_y2),
+            Plot::Series(s)        => add_series(s, &mut scene, &computed_y2),
+            Plot::Band(b)          => add_band(b, &mut scene, &computed_y2),
+            Plot::Bar(b)           => add_bar(b, &mut scene, &computed_y2),
+            Plot::Histogram(h)     => add_histogram(h, &mut scene, &computed_y2),
+            Plot::Box(b)           => add_boxplot(b, &mut scene, &computed_y2),
+            Plot::Violin(v)        => add_violin(v, &mut scene, &computed_y2),
+            Plot::Strip(s)         => add_strip(s, &mut scene, &computed_y2),
+            Plot::Density(d)       => add_density(d, &computed_y2, &mut scene),
+            Plot::StackedArea(s)   => add_stacked_area(s, &mut scene, &computed_y2),
+            Plot::Streamgraph(sg)  => add_streamgraph(sg, &mut scene, &computed_y2),
+            Plot::Waterfall(w)     => add_waterfall(w, &mut scene, &computed_y2),
+            Plot::Candlestick(c)   => add_candlestick(c, &mut scene, &computed_y2),
+            Plot::Raincloud(r)     => add_raincloud(r, &mut scene, &computed_y2),
+            Plot::Lollipop(lp)     => add_lollipop(lp, &mut scene, &computed_y2),
+            Plot::Survival(sp)     => add_survival(sp, &mut scene, &computed_y2),
+            Plot::Ecdf(ep)         => add_ecdf(ep, &computed_y2, &mut scene),
+            Plot::QQ(qp)           => add_qqplot(qp, &computed_y2, &mut scene),
             _ => {}
         }
     }
