@@ -26,6 +26,7 @@ mod synteny;
 mod density;
 mod ecdf;
 mod qq;
+mod streamgraph;
 mod ridgeline;
 mod polar;
 mod ternary;
@@ -79,6 +80,8 @@ enum Commands {
     Ecdf(ecdf::EcdfArgs),
     #[command(name = "qq")]
     QQ(qq::QQArgs),
+    #[command(name = "streamgraph")]
+    Streamgraph(streamgraph::StreamgraphArgs),
     #[command(name = "ridgeline")]
     Ridgeline(ridgeline::RidgelineArgs),
     Polar(polar::PolarArgs),
@@ -131,6 +134,7 @@ fn main() {
         Commands::Density(args) => density::run(args),
         Commands::Ecdf(args) => ecdf::run(args),
         Commands::QQ(args) => qq::run(args),
+        Commands::Streamgraph(args) => streamgraph::run(args),
         Commands::Ridgeline(args) => ridgeline::run(args),
         Commands::Polar(args) => polar::run(args),
         Commands::Ternary(args) => ternary::run(args),

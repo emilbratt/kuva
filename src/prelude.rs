@@ -111,6 +111,9 @@ pub use crate::plot::{
     NetworkEdge,
     NetworkLayout,
     NodeShape,
+    StreamgraphPlot,
+    StreamBaseline,
+    StreamOrder,
     // Style / config types used when building plots
     MarkerShape,
     LineStyle,

@@ -43,7 +43,7 @@ use crate::plot::line::LinePlot;
 use crate::plot::bar::BarPlot;
 use crate::plot::histogram::Histogram;
 use crate::plot::band::BandPlot;
-use crate::plot::{BoxPlot, BrickPlot, Heatmap, Histogram2D, PiePlot, SeriesPlot, SeriesStyle, ViolinPlot};
+use crate::plot::{BoxPlot, BrickAnchor, BrickPlot, Heatmap, Histogram2D, PiePlot, SeriesPlot, SeriesStyle, ViolinPlot};
 use crate::plot::pie::PieLabelPosition;
 use crate::plot::waterfall::{WaterfallPlot, WaterfallKind};
 use crate::plot::strip::{StripPlot, StripStyle};
@@ -1578,9 +1578,8 @@ fn add_brickplot(brickplot: &BrickPlot, scene: &mut Scene, computed: &ComputedLa
     }
 
     let has_variable_width = brickplot.motif_lengths.is_some();
-    // Resolve the offset for a given row index.
-    // Uses per-row offset if set, otherwise falls back to global x_offset.
-    // x_origin is added so that the chosen reference coordinate maps to x=0.
+
+    // Resolve the base offset for a given row index (per-row + global x_offset + x_origin).
     let row_offset = |i: usize| -> f64 {
         let per_row = if let Some(ref offsets) = brickplot.x_offsets {
             offsets.get(i).copied().flatten().unwrap_or(brickplot.x_offset)
@@ -1590,8 +1589,89 @@ fn add_brickplot(brickplot: &BrickPlot, scene: &mut Scene, computed: &ComputedLa
         per_row + brickplot.x_origin
     };
 
-    for (i, row) in rows.iter().enumerate() {
-        let x_offset = row_offset(i);
+    // Compute total row width (in data units) for each row: left_flank + STR + right_flank.
+    let str_width = |i: usize| -> f64 {
+        rows[i].chars().map(|ch| {
+            if let Some(ref ml) = brickplot.motif_lengths { *ml.get(&ch).unwrap_or(&1) as f64 }
+            else { 1.0 }
+        }).sum()
+    };
+    let left_len = |i: usize| -> f64 {
+        brickplot.left_flanks.as_ref()
+            .and_then(|f| f.get(i))
+            .map(|s| s.chars().count() as f64)
+            .unwrap_or(0.0)
+    };
+    let right_len = |i: usize| -> f64 {
+        brickplot.right_flanks.as_ref()
+            .and_then(|f| f.get(i))
+            .map(|s| s.chars().count() as f64)
+            .unwrap_or(0.0)
+    };
+
+    // Right-anchor: compute a per-row shift so all trailing edges line up.
+    let right_align_shift: Vec<f64> = if brickplot.anchor == BrickAnchor::Right {
+        let right_edges: Vec<f64> = (0..num_rows)
+            .map(|i| str_width(i) + right_len(i))
+            .collect();
+        let max_right = right_edges.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        right_edges.iter().map(|&re| max_right - re).collect()
+    } else {
+        vec![0.0; num_rows]
+    };
+
+    // DNA colours for left/right flanks (standard bioinformatics convention).
+    let dna_color = |ch: char| -> &'static str {
+        match ch {
+            'A' | 'a' => "rgb(0,150,0)",
+            'C' | 'c' => "rgb(0,0,255)",
+            'G' | 'g' => "rgb(209,113,5)",
+            'T' | 't' => "rgb(255,0,0)",
+            _          => "rgb(180,180,180)",
+        }
+    };
+
+    // Helper: draw one brick rect. `yr` is the y-flipped row index for pixel mapping.
+    let draw_brick = |scene: &mut Scene, x_start: f64, width: f64, yr: usize,
+                          eff_offset: f64, fill: Color| {
+        let x0 = computed.map_x(x_start - eff_offset);
+        let x1 = computed.map_x(x_start + width - eff_offset);
+        let y0 = computed.map_y(yr as f64 + 1.0);
+        let y1 = computed.map_y(yr as f64);
+        scene.add(Primitive::Rect {
+            x: x0,
+            y: y0,
+            width: (x1 - x0).abs() * 0.95,
+            height: (y1 - y0).abs() * 0.95,
+            fill,
+            stroke: None,
+            stroke_width: None,
+            opacity: None,
+        });
+    };
+
+    // Pass 1: brick rects. Row 0 renders at the TOP of the plot (y-flip via yr).
+    for i in 0..num_rows {
+        let yr = num_rows - 1 - i;
+        let eff_offset = row_offset(i) - right_align_shift[i];
+        let ll = left_len(i);
+        let sw = str_width(i);
+
+        // 1a. Left flank (negative data positions relative to STR start).
+        if let Some(ref flanks) = brickplot.left_flanks {
+            if let Some(flank) = flanks.get(i) {
+                for (k, ch) in flank.chars().enumerate() {
+                    let x_start = -(ll) + k as f64;
+                    draw_brick(scene, x_start, 1.0, yr, eff_offset,
+                               Color::from(dna_color(ch)));
+                }
+            }
+        }
+
+        // 1b. STR bricks.
+        let row = &rows[i];
+        let template = brickplot.template.as_ref()
+            .expect("BrickPlot rendered without template");
         let mut x_pos: f64 = 0.0;
         for (j, value) in row.chars().enumerate() {
             let width = if let Some(ref ml) = brickplot.motif_lengths {
@@ -1600,33 +1680,30 @@ fn add_brickplot(brickplot: &BrickPlot, scene: &mut Scene, computed: &ComputedLa
                 1.0
             };
             let x_start = if has_variable_width { x_pos } else { j as f64 };
-
-            let color = brickplot.template.as_ref()
-                .expect("BrickPlot rendered with colormap mode but template is None")
-                .get(&value)
+            let color = template.get(&value)
                 .expect("BrickPlot value not found in template colormap");
-
-            let x0 = computed.map_x(x_start - x_offset);
-            let x1 = computed.map_x(x_start + width - x_offset);
-            let y0 = computed.map_y(i as f64 + 1.0);
-            let y1 = computed.map_y(i as f64);
-            scene.add(Primitive::Rect {
-                x: x0,
-                y: y0,
-                width: (x1-x0).abs()*0.95,
-                height: (y1-y0).abs()*0.95,
-                fill: Color::from(color.as_str()),
-                stroke: None,
-                stroke_width: None,
-                opacity: None,
-            });
-
+            draw_brick(scene, x_start, width, yr, eff_offset, Color::from(color.as_str()));
             x_pos += width;
         }
+
+        // 1c. Right flank.
+        if let Some(ref flanks) = brickplot.right_flanks {
+            if let Some(flank) = flanks.get(i) {
+                for (k, ch) in flank.chars().enumerate() {
+                    let x_start = sw + k as f64;
+                    draw_brick(scene, x_start, 1.0, yr, eff_offset,
+                               Color::from(dna_color(ch)));
+                }
+            }
+        }
     }
+
+    // Pass 2: show_values — character labels centred inside STR bricks.
     if brickplot.show_values {
-        for (i, row) in rows.iter().enumerate() {
-            let x_offset = row_offset(i);
+        for i in 0..num_rows {
+            let yr = num_rows - 1 - i;
+            let eff_offset = row_offset(i) - right_align_shift[i];
+            let row = &rows[i];
             let mut x_pos: f64 = 0.0;
             for (j, value) in row.chars().enumerate() {
                 let width = if let Some(ref ml) = brickplot.motif_lengths {
@@ -1635,14 +1712,13 @@ fn add_brickplot(brickplot: &BrickPlot, scene: &mut Scene, computed: &ComputedLa
                     1.0
                 };
                 let x_start = if has_variable_width { x_pos } else { j as f64 };
-
-                let x0 = computed.map_x(x_start - x_offset);
-                let x1 = computed.map_x(x_start + width - x_offset);
-                let y0 = computed.map_y(i as f64 + 1.0);
-                let y1 = computed.map_y(i as f64);
+                let x0 = computed.map_x(x_start - eff_offset);
+                let x1 = computed.map_x(x_start + width - eff_offset);
+                let y0 = computed.map_y(yr as f64 + 1.0);
+                let y1 = computed.map_y(yr as f64);
                 scene.add(Primitive::Text {
-                    x: x0 + ((x1-x0).abs() / 2.0),
-                    y: y0 + ((y1-y0).abs() / 2.0),
+                    x: x0 + ((x1 - x0).abs() / 2.0),
+                    y: y0 + ((y1 - y0).abs() / 2.0),
                     content: format!("{}", value),
                     size: computed.body_size,
                     anchor: TextAnchor::Middle,
@@ -1650,9 +1726,136 @@ fn add_brickplot(brickplot: &BrickPlot, scene: &mut Scene, computed: &ComputedLa
                     bold: false,
                     color: None,
                 });
-
                 x_pos += width;
             }
+        }
+    }
+
+}
+
+/// Render per-block notation labels for a BrickPlot.
+/// Must be called AFTER ClipEnd so labels that sit above the plot area are not clipped.
+fn add_brickplot_notations(brickplot: &BrickPlot, scene: &mut Scene, computed: &ComputedLayout) {
+    let notations = match brickplot.notations.as_ref() {
+        Some(n) => n,
+        None => return,
+    };
+    let motifs_map = match brickplot.motifs.as_ref() {
+        Some(m) => m,
+        None => return,
+    };
+
+    let rows: &Vec<String> = if let Some(ref exp) = brickplot.strigar_exp {
+        exp
+    } else {
+        &brickplot.sequences
+    };
+    let num_rows = rows.len();
+    if num_rows == 0 { return; }
+
+    let row_offset = |i: usize| -> f64 {
+        let per_row = if let Some(ref offsets) = brickplot.x_offsets {
+            offsets.get(i).copied().flatten().unwrap_or(brickplot.x_offset)
+        } else {
+            brickplot.x_offset
+        };
+        per_row + brickplot.x_origin
+    };
+
+    // Right-anchor shift (same logic as add_brickplot).
+    let str_width = |i: usize| -> f64 {
+        rows[i].chars().map(|ch| {
+            if let Some(ref ml) = brickplot.motif_lengths { *ml.get(&ch).unwrap_or(&1) as f64 }
+            else { 1.0 }
+        }).sum()
+    };
+    let right_len = |i: usize| -> f64 {
+        brickplot.right_flanks.as_ref()
+            .and_then(|f| f.get(i))
+            .map(|s| s.chars().count() as f64)
+            .unwrap_or(0.0)
+    };
+    let right_align_shift: Vec<f64> = if brickplot.anchor == BrickAnchor::Right {
+        let right_edges: Vec<f64> = (0..num_rows).map(|i| str_width(i) + right_len(i)).collect();
+        let max_right = right_edges.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        right_edges.iter().map(|&re| max_right - re).collect()
+    } else {
+        vec![0.0; num_rows]
+    };
+
+    const N_TIERS: usize = 4;
+    let font_px = computed.body_size as f64;
+    let label_size = (font_px * 0.85) as u32;
+    let line_h = font_px * 1.1;
+
+    for (i, notation_opt) in notations.iter().enumerate() {
+        if notation_opt.is_none() { continue; }
+        if i >= num_rows { continue; }
+
+        let yr = num_rows - 1 - i;
+        let eff_offset = row_offset(i) - right_align_shift[i];
+        let y_top_px = computed.map_y((yr + 1) as f64);
+
+        let row = &rows[i];
+
+        let letter_width = |ch: char| -> f64 {
+            if let Some(ref ml) = brickplot.motif_lengths { *ml.get(&ch).unwrap_or(&1) as f64 }
+            else { 1.0 }
+        };
+
+        struct Run { letter: char, count: usize, x_start: f64, x_end: f64 }
+        let mut runs: Vec<Run> = Vec::new();
+        let mut cum_x: f64 = 0.0;
+        let mut run_letter: Option<char> = None;
+        let mut run_start_x: f64 = 0.0;
+        let mut run_count: usize = 0;
+
+        for ch in row.chars() {
+            let w = letter_width(ch);
+            if Some(ch) == run_letter {
+                run_count += 1;
+            } else {
+                if let Some(rl) = run_letter {
+                    runs.push(Run { letter: rl, count: run_count, x_start: run_start_x, x_end: cum_x });
+                }
+                run_letter = Some(ch);
+                run_count = 1;
+                run_start_x = cum_x;
+            }
+            cum_x += w;
+        }
+        if let Some(rl) = run_letter {
+            runs.push(Run { letter: rl, count: run_count, x_start: run_start_x, x_end: cum_x });
+        }
+
+        let mut last_right: [f64; N_TIERS] = [f64::NEG_INFINITY; N_TIERS];
+
+        for run in &runs {
+            if run.letter == '@' { continue; }
+            let kmer = match motifs_map.get(&run.letter) {
+                Some(k) => k.as_str(),
+                None => continue,
+            };
+            let label = format!("({}){}", kmer, run.count);
+            let center_px = computed.map_x((run.x_start + run.x_end) / 2.0 - eff_offset);
+            let text_half_w = label.len() as f64 * font_px * 0.28;
+            let left_px  = center_px - text_half_w;
+            let right_px = center_px + text_half_w;
+
+            let chosen = (0..N_TIERS).find(|&t| left_px > last_right[t]).unwrap_or(0);
+            last_right[chosen] = right_px;
+
+            let y_text = y_top_px - 2.0 - (chosen as f64 + 0.5) * line_h;
+            scene.add(Primitive::Text {
+                x: center_px,
+                y: y_text,
+                content: label,
+                size: label_size,
+                anchor: TextAnchor::Middle,
+                rotate: None,
+                bold: false,
+                color: None,
+            });
         }
     }
 }
@@ -7520,13 +7723,27 @@ pub fn collect_legend_entries(plots: &[Plot]) -> Vec<LegendEntry> {
             Plot::Brick(brickplot) => {
                 let labels = brickplot.template.as_ref().expect("BrickPlot legend requires a template colormap");
                 let motifs = brickplot.motifs.as_ref();
+                // Sort by global letter (A = most frequent first, then B, C, …).
+                // '@' (gap) goes last.
                 let mut sorted_labels: Vec<(&char, &String)> = labels.iter().collect();
-                sorted_labels.sort_by_key(|(letter, _)| *letter);
+                sorted_labels.sort_by(|(a, _), (b, _)| {
+                    match (*a, *b) {
+                        ('@', '@') => std::cmp::Ordering::Equal,
+                        ('@', _)   => std::cmp::Ordering::Greater,
+                        (_, '@')   => std::cmp::Ordering::Less,
+                        _          => a.cmp(b),
+                    }
+                });
                 for (letter, color) in sorted_labels {
-                    let label = if let Some(m) = motifs {
+                    let base_label = if let Some(m) = motifs {
                         m.get(letter).cloned().unwrap_or(letter.to_string())
                     } else {
                         letter.to_string()
+                    };
+                    let label = if brickplot.mark_primary && *letter == 'A' {
+                        format!("{}*", base_label)
+                    } else {
+                        base_label
                     };
                     entries.push(LegendEntry {
                         label,
@@ -8143,6 +8360,20 @@ pub fn collect_legend_entries(plots: &[Plot]) -> Vec<LegendEntry> {
                     }
                 }
             }
+            Plot::Streamgraph(sg) => {
+                if sg.legend_label.is_some() {
+                    for k in 0..sg.series.len() {
+                        if let Some(Some(ref label)) = sg.labels.get(k) {
+                            entries.push(LegendEntry {
+                                label: label.clone(),
+                                color: sg.resolve_color(k).to_string(),
+                                shape: LegendShape::Rect,
+                                dasharray: None,
+                            });
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -8642,6 +8873,279 @@ fn add_stacked_area(sa: &StackedAreaPlot, scene: &mut Scene, computed: &Computed
 
         // Advance lower to current upper for the next series
         lower[..n].copy_from_slice(&upper[..n]);
+    }
+}
+
+// ── Streamgraph ───────────────────────────────────────────────────────────────
+
+/// Build a Catmull-Rom smooth closed SVG path for a stream band.
+///
+/// `upper_px` and `lower_px` are parallel slices of (pixel_x, pixel_y) pairs,
+/// where `upper_px` goes left→right and `lower_px` goes left→right.
+/// The returned path travels upper left→right then lower right→left and closes.
+fn stream_band_path(upper_px: &[(f64, f64)], lower_px: &[(f64, f64)]) -> String {
+    let n = upper_px.len();
+    if n == 0 { return String::new(); }
+
+    let mut rb = ryu::Buffer::new();
+    let mut path = String::with_capacity(n * 60);
+
+    // Helper: append Catmull-Rom cubic bezier segment to path
+    // P0=prev, P1=curr, P2=next, P3=after — produces one C command from P1→P2
+    let append_cr = |path: &mut String,
+                         p0: (f64, f64),
+                         p1: (f64, f64),
+                         p2: (f64, f64),
+                         p3: (f64, f64),
+                         rb: &mut ryu::Buffer| {
+        let cp1x = p1.0 + (p2.0 - p0.0) / 6.0;
+        let cp1y = p1.1 + (p2.1 - p0.1) / 6.0;
+        let cp2x = p2.0 - (p3.0 - p1.0) / 6.0;
+        let cp2y = p2.1 - (p3.1 - p1.1) / 6.0;
+        path.push_str("C ");
+        path.push_str(rb.format(round2(cp1x))); path.push(' ');
+        path.push_str(rb.format(round2(cp1y))); path.push(' ');
+        path.push_str(rb.format(round2(cp2x))); path.push(' ');
+        path.push_str(rb.format(round2(cp2y))); path.push(' ');
+        path.push_str(rb.format(round2(p2.0))); path.push(' ');
+        path.push_str(rb.format(round2(p2.1))); path.push(' ');
+    };
+
+    // Move to first upper point
+    path.push_str("M ");
+    path.push_str(rb.format(round2(upper_px[0].0))); path.push(' ');
+    path.push_str(rb.format(round2(upper_px[0].1))); path.push(' ');
+
+    if n == 1 {
+        // Single point — degenerate; just close
+        path.push('Z');
+        return path;
+    }
+
+    // Forward along upper edge
+    for i in 0..n - 1 {
+        let p0 = if i == 0     { upper_px[0] }     else { upper_px[i - 1] };
+        let p1 = upper_px[i];
+        let p2 = upper_px[i + 1];
+        let p3 = if i + 2 < n  { upper_px[i + 2] } else { upper_px[n - 1] };
+        append_cr(&mut path, p0, p1, p2, p3, &mut rb);
+    }
+
+    // Connect to last lower point
+    path.push_str("L ");
+    path.push_str(rb.format(round2(lower_px[n - 1].0))); path.push(' ');
+    path.push_str(rb.format(round2(lower_px[n - 1].1))); path.push(' ');
+
+    // Backward along lower edge
+    for i in (0..n - 1).rev() {
+        let p0 = if i + 2 < n  { lower_px[i + 2] } else { lower_px[n - 1] };
+        let p1 = lower_px[i + 1];
+        let p2 = lower_px[i];
+        let p3 = if i == 0     { lower_px[0] }     else { lower_px[i - 1] };
+        append_cr(&mut path, p0, p1, p2, p3, &mut rb);
+    }
+
+    path.push('Z');
+    path
+}
+
+/// Build a Catmull-Rom stroke path (upper edge only, open).
+fn stream_stroke_path(pts: &[(f64, f64)]) -> String {
+    let n = pts.len();
+    if n == 0 { return String::new(); }
+
+    let mut rb = ryu::Buffer::new();
+    let mut path = String::with_capacity(n * 30);
+
+    path.push_str("M ");
+    path.push_str(rb.format(round2(pts[0].0))); path.push(' ');
+    path.push_str(rb.format(round2(pts[0].1))); path.push(' ');
+
+    for i in 0..n - 1 {
+        let p0 = if i == 0     { pts[0] }     else { pts[i - 1] };
+        let p1 = pts[i];
+        let p2 = pts[i + 1];
+        let p3 = if i + 2 < n  { pts[i + 2] } else { pts[n - 1] };
+        let cp1x = p1.0 + (p2.0 - p0.0) / 6.0;
+        let cp1y = p1.1 + (p2.1 - p0.1) / 6.0;
+        let cp2x = p2.0 - (p3.0 - p1.0) / 6.0;
+        let cp2y = p2.1 - (p3.1 - p1.1) / 6.0;
+        path.push_str("C ");
+        path.push_str(rb.format(round2(cp1x))); path.push(' ');
+        path.push_str(rb.format(round2(cp1y))); path.push(' ');
+        path.push_str(rb.format(round2(cp2x))); path.push(' ');
+        path.push_str(rb.format(round2(cp2y))); path.push(' ');
+        path.push_str(rb.format(round2(p2.0))); path.push(' ');
+        path.push_str(rb.format(round2(p2.1))); path.push(' ');
+    }
+    path
+}
+
+fn add_streamgraph(
+    sg: &crate::plot::streamgraph::StreamgraphPlot,
+    scene: &mut Scene,
+    computed: &ComputedLayout,
+) {
+    let geom = match sg.compute_geometry() {
+        Some(g) => g,
+        None => return,
+    };
+
+    let n_pts = sg.x.len();
+    let n_streams = geom.render_order.len();
+
+    for k in 0..n_streams {
+        let orig_idx = geom.render_order[k];
+        let color = sg.resolve_color(orig_idx).to_string();
+
+        // Build pixel-space point arrays
+        let upper_px: Vec<(f64, f64)> = (0..n_pts).map(|i| {
+            (computed.map_x(sg.x[i]), computed.map_y(geom.uppers[k][i]))
+        }).collect();
+        let lower_px: Vec<(f64, f64)> = (0..n_pts).map(|i| {
+            (computed.map_x(sg.x[i]), computed.map_y(geom.lowers[k][i]))
+        }).collect();
+
+        // Filled band
+        let path_d = if sg.smooth {
+            stream_band_path(&upper_px, &lower_px)
+        } else {
+            // Linear path
+            let mut d = String::with_capacity(n_pts * 32);
+            let mut rb = ryu::Buffer::new();
+            for (i, &(px, py)) in upper_px.iter().enumerate() {
+                d.push(if i == 0 { 'M' } else { 'L' });
+                d.push(' ');
+                d.push_str(rb.format(round2(px))); d.push(' ');
+                d.push_str(rb.format(round2(py))); d.push(' ');
+            }
+            for &(px, py) in lower_px.iter().rev() {
+                d.push_str("L ");
+                d.push_str(rb.format(round2(px))); d.push(' ');
+                d.push_str(rb.format(round2(py))); d.push(' ');
+            }
+            d.push('Z');
+            d
+        };
+
+        scene.add(Primitive::Path(Box::new(PathData {
+            d: path_d,
+            fill: Some(Color::from(&color)),
+            stroke: "none".into(),
+            stroke_width: 0.0,
+            opacity: Some(sg.fill_opacity),
+            stroke_dasharray: None,
+        })));
+
+        // Optional inter-stream stroke along the upper edge
+        if sg.stroke_between {
+            let stroke_d = if sg.smooth {
+                stream_stroke_path(&upper_px)
+            } else {
+                let mut d = String::with_capacity(n_pts * 20);
+                let mut rb = ryu::Buffer::new();
+                for (i, &(px, py)) in upper_px.iter().enumerate() {
+                    d.push(if i == 0 { 'M' } else { 'L' });
+                    d.push(' ');
+                    d.push_str(rb.format(round2(px))); d.push(' ');
+                    d.push_str(rb.format(round2(py))); d.push(' ');
+                }
+                d
+            };
+            scene.add(Primitive::Path(Box::new(PathData {
+                d: stroke_d,
+                fill: None,
+                stroke: "white".into(),
+                stroke_width: sg.stroke_width,
+                opacity: None,
+                stroke_dasharray: None,
+            })));
+        }
+    }
+
+    // Inline stream labels — drawn on top after all fills
+    if sg.show_labels {
+        for k in 0..n_streams {
+            let orig_idx = geom.render_order[k];
+            let label = match sg.labels.get(orig_idx).and_then(|l| l.as_ref()) {
+                Some(l) => l.clone(),
+                None => continue,
+            };
+
+            let font_size = computed.body_size as f64;
+            // Estimated half-width of the label (middle-anchored).
+            let half_text_w = label.len() as f64 * font_size * 0.60 / 2.0 + 4.0;
+            let plot_left_px  = computed.margin_left;
+            let plot_right_px = computed.width - computed.margin_right;
+
+            // Minimum band height (px) for the label to fit vertically.
+            let min_h = (font_size * 1.3 + 4.0).max(sg.min_label_height);
+
+            // Exclude the first and last data points (stream has no fill there),
+            // and restrict to the inner 80 % of the x range so labels are never
+            // placed near the tapering edges where the band may shift away
+            // from the label y level.
+            let inner_lo = (n_pts as f64 * 0.10).ceil() as usize;
+            let inner_hi = (n_pts as f64 * 0.90).floor() as usize;
+            let search_start = inner_lo.max(if n_pts > 2 { 1 } else { 0 });
+            let search_end   = inner_hi.min(if n_pts > 2 { n_pts - 1 } else { n_pts });
+
+            // Pick the index with the tallest band in that window.
+            let max_idx_opt = (search_start..search_end).max_by(|&a, &b| {
+                let ha = geom.uppers[k][a] - geom.lowers[k][a];
+                let hb = geom.uppers[k][b] - geom.lowers[k][b];
+                ha.partial_cmp(&hb).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let max_idx = match max_idx_opt { Some(i) => i, None => continue };
+
+            let lower_y = computed.map_y(geom.lowers[k][max_idx]);
+            let upper_y = computed.map_y(geom.uppers[k][max_idx]);
+            let height_px = (lower_y - upper_y).abs();
+            if height_px < min_h { continue; }
+
+            // Place label at that x, then clamp so it stays within plot bounds.
+            let raw_x = computed.map_x(sg.x[max_idx]);
+            let mid_x = raw_x
+                .max(plot_left_px  + half_text_w)
+                .min(plot_right_px - half_text_w);
+            let mid_y = (lower_y + upper_y) / 2.0 + font_size * 0.35;
+
+            // Choose text color: white for dark fills, dark for light
+            let txt_color = choose_label_color(sg.resolve_color(orig_idx));
+
+            scene.add(Primitive::Text {
+                x: mid_x,
+                y: mid_y,
+                content: label,
+                size: computed.body_size,
+                color: Some(Color::from(txt_color)),
+                anchor: TextAnchor::Middle,
+                bold: false,
+                rotate: None,
+            });
+        }
+    }
+}
+
+/// Return a contrasting text color (white or near-black) for a CSS fill color.
+fn choose_label_color(css: &str) -> &'static str {
+    // Parse approximate luminance from well-known colors; default to white
+    let dark_fills = [
+        "steelblue", "cornflowerblue", "mediumpurple", "orchid",
+        "peru", "tomato", "coral", "goldenrod",
+        "mediumseagreen", "lightslategray",
+    ];
+    if dark_fills.contains(&css) {
+        "white"
+    } else if css.starts_with('#') && css.len() == 7 {
+        // Rough luminance from hex
+        let r = u8::from_str_radix(&css[1..3], 16).unwrap_or(128) as f64;
+        let g = u8::from_str_radix(&css[3..5], 16).unwrap_or(128) as f64;
+        let b = u8::from_str_radix(&css[5..7], 16).unwrap_or(128) as f64;
+        let lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        if lum < 140.0 { "white" } else { "#333333" }
+    } else {
+        "white"
     }
 }
 
@@ -9927,6 +10431,9 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
             Plot::Network(n) => {
                 add_network(n, &mut scene, &computed);
             }
+            Plot::Streamgraph(sg) => {
+                add_streamgraph(sg, &mut scene, &computed);
+            }
         }
     }
 
@@ -9941,6 +10448,13 @@ pub fn render_multiple(plots: Vec<Plot>, layout: Layout) -> Scene {
     for plot in plots.iter() {
         if let Plot::Manhattan(m) = plot {
             add_manhattan_chr_labels(m, &mut scene, &computed);
+        }
+    }
+
+    // BrickPlot notation labels sit above the plot area clip rect — emit after ClipEnd.
+    for plot in plots.iter() {
+        if let Plot::Brick(bp) = plot {
+            add_brickplot_notations(bp, &mut scene, &computed);
         }
     }
 
@@ -10111,31 +10625,33 @@ pub fn render_twin_y(primary: Vec<Plot>, secondary: Vec<Plot>, layout: Layout) -
             Plot::Raincloud(r)   => add_raincloud(r, &mut scene, &computed),
             Plot::Lollipop(lp)   => add_lollipop(lp, &mut scene, &computed),
             Plot::Survival(sp)   => add_survival(sp, &mut scene, &computed),
-            Plot::Ecdf(ep)       => add_ecdf(ep, &computed, &mut scene),
-            Plot::QQ(qp)         => add_qqplot(qp, &computed, &mut scene),
+            Plot::Ecdf(ep)         => add_ecdf(ep, &computed, &mut scene),
+            Plot::QQ(qp)           => add_qqplot(qp, &computed, &mut scene),
+            Plot::Streamgraph(sg)  => add_streamgraph(sg, &mut scene, &computed),
             _ => {}
         }
     }
     for plot in secondary.iter() {
         match plot {
-            Plot::Scatter(s)     => add_scatter(s, &mut scene, &computed_y2),
-            Plot::Line(l)        => add_line(l, &mut scene, &computed_y2),
-            Plot::Series(s)      => add_series(s, &mut scene, &computed_y2),
-            Plot::Band(b)        => add_band(b, &mut scene, &computed_y2),
-            Plot::Bar(b)         => add_bar(b, &mut scene, &computed_y2),
-            Plot::Histogram(h)   => add_histogram(h, &mut scene, &computed_y2),
-            Plot::Box(b)         => add_boxplot(b, &mut scene, &computed_y2),
-            Plot::Violin(v)      => add_violin(v, &mut scene, &computed_y2),
-            Plot::Strip(s)       => add_strip(s, &mut scene, &computed_y2),
-            Plot::Density(d)     => add_density(d, &computed_y2, &mut scene),
-            Plot::StackedArea(s) => add_stacked_area(s, &mut scene, &computed_y2),
-            Plot::Waterfall(w)   => add_waterfall(w, &mut scene, &computed_y2),
-            Plot::Candlestick(c) => add_candlestick(c, &mut scene, &computed_y2),
-            Plot::Raincloud(r)   => add_raincloud(r, &mut scene, &computed_y2),
-            Plot::Lollipop(lp)   => add_lollipop(lp, &mut scene, &computed_y2),
-            Plot::Survival(sp)   => add_survival(sp, &mut scene, &computed_y2),
-            Plot::Ecdf(ep)       => add_ecdf(ep, &computed_y2, &mut scene),
-            Plot::QQ(qp)         => add_qqplot(qp, &computed_y2, &mut scene),
+            Plot::Scatter(s)       => add_scatter(s, &mut scene, &computed_y2),
+            Plot::Line(l)          => add_line(l, &mut scene, &computed_y2),
+            Plot::Series(s)        => add_series(s, &mut scene, &computed_y2),
+            Plot::Band(b)          => add_band(b, &mut scene, &computed_y2),
+            Plot::Bar(b)           => add_bar(b, &mut scene, &computed_y2),
+            Plot::Histogram(h)     => add_histogram(h, &mut scene, &computed_y2),
+            Plot::Box(b)           => add_boxplot(b, &mut scene, &computed_y2),
+            Plot::Violin(v)        => add_violin(v, &mut scene, &computed_y2),
+            Plot::Strip(s)         => add_strip(s, &mut scene, &computed_y2),
+            Plot::Density(d)       => add_density(d, &computed_y2, &mut scene),
+            Plot::StackedArea(s)   => add_stacked_area(s, &mut scene, &computed_y2),
+            Plot::Streamgraph(sg)  => add_streamgraph(sg, &mut scene, &computed_y2),
+            Plot::Waterfall(w)     => add_waterfall(w, &mut scene, &computed_y2),
+            Plot::Candlestick(c)   => add_candlestick(c, &mut scene, &computed_y2),
+            Plot::Raincloud(r)     => add_raincloud(r, &mut scene, &computed_y2),
+            Plot::Lollipop(lp)     => add_lollipop(lp, &mut scene, &computed_y2),
+            Plot::Survival(sp)     => add_survival(sp, &mut scene, &computed_y2),
+            Plot::Ecdf(ep)         => add_ecdf(ep, &computed_y2, &mut scene),
+            Plot::QQ(qp)           => add_qqplot(qp, &computed_y2, &mut scene),
             _ => {}
         }
     }

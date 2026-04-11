@@ -45,6 +45,7 @@ pub mod parallel;
 pub mod mosaic;
 pub mod qq;
 pub mod network;
+pub mod streamgraph;
 
 pub mod legend;
 
@@ -60,7 +61,7 @@ pub use violin::{ViolinPlot, ViolinGroup};
 pub use pie::{PiePlot, PieSlice, PieLabelPosition};
 pub use series::{SeriesPlot, SeriesStyle};
 pub use heatmap::{Heatmap, ColorMap};
-pub use brick::BrickPlot;
+pub use brick::{BrickPlot, BrickAnchor};
 pub use band::BandPlot;
 pub use waterfall::{WaterfallPlot, WaterfallBar, WaterfallKind};
 pub use strip::{StripPlot, StripGroup, StripStyle};
@@ -97,5 +98,6 @@ pub use parallel::{ParallelPlot, ParallelRow};
 pub use mosaic::{MosaicPlot, MosaicCell};
 pub use qq::{QQPlot, QQGroup, QQMode};
 pub use network::{NetworkPlot, NetworkNode, NetworkEdge, NetworkLayout, NodeShape};
+pub use streamgraph::{StreamgraphPlot, StreamBaseline, StreamOrder};
 
 pub use legend::{Legend, LegendEntry, LegendShape, LegendPosition, LegendGroup};

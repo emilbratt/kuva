@@ -44,6 +44,7 @@ use crate::plot::parallel::ParallelPlot;
 use crate::plot::mosaic::MosaicPlot;
 use crate::plot::qq::QQPlot;
 use crate::plot::network::NetworkPlot;
+use crate::plot::streamgraph::StreamgraphPlot;
 use crate::plot::legend::ColorBarInfo;
 use crate::render::render_utils;
 
@@ -95,6 +96,7 @@ pub enum Plot {
     Ecdf(EcdfPlot),
     QQ(QQPlot),
     Network(NetworkPlot),
+    Streamgraph(StreamgraphPlot),
 }
 
 impl From<ScatterPlot>    for Plot { fn from(p: ScatterPlot)    -> Self { Plot::Scatter(p) } }
@@ -143,6 +145,7 @@ impl From<MosaicPlot>      for Plot { fn from(p: MosaicPlot)      -> Self { Plot
 impl From<EcdfPlot>        for Plot { fn from(p: EcdfPlot)        -> Self { Plot::Ecdf(p) } }
 impl From<QQPlot>          for Plot { fn from(p: QQPlot)          -> Self { Plot::QQ(p) } }
 impl From<NetworkPlot>     for Plot { fn from(p: NetworkPlot)     -> Self { Plot::Network(p) } }
+impl From<StreamgraphPlot> for Plot { fn from(p: StreamgraphPlot) -> Self { Plot::Streamgraph(p) } }
 
 use crate::plot::plot3d::DataRanges3D;
 use crate::plot::heatmap::ColorMap;
@@ -222,7 +225,7 @@ impl Plot {
             Plot::Parallel(p) => p.color = color.into(),
             Plot::Ecdf(e) => e.color = color.into(),
             Plot::QQ(q) => q.color = color.into(),
-            _ => {}
+            _ => {}  // multi-series plots (StackedArea, Streamgraph, etc.) skip palette auto-assign
         }
     }
 
@@ -633,21 +636,10 @@ impl Plot {
                     bp.sequences.len()
                 };
 
-                let max_width = if let Some(ref exp) = bp.strigar_exp {
-                    if let Some(ref ml) = bp.motif_lengths {
-                        // Variable-width: sum motif lengths per row
-                        exp.iter().map(|s| {
-                            s.chars().map(|c| *ml.get(&c).unwrap_or(&1) as f64).sum::<f64>()
-                        }).fold(0.0f64, f64::max)
-                    } else {
-                        exp.iter().map(|s| s.len()).max().unwrap_or(0) as f64
-                    }
-                } else {
-                    bp.sequences.iter().map(|s| s.len()).max().unwrap_or(0) as f64
-                };
+                let n_rows = rows;
 
-                // Compute the true x extent across all rows, accounting for per-row offsets.
-                let row_width = |i: usize| -> f64 {
+                // STR width for row i (in data units, excluding flanks).
+                let str_width = |i: usize| -> f64 {
                     if let Some(ref exp) = bp.strigar_exp {
                         if let Some(ref ml) = bp.motif_lengths {
                             exp.get(i).map(|s| {
@@ -660,22 +652,50 @@ impl Plot {
                         bp.sequences.get(i).map(|s| s.len() as f64).unwrap_or(0.0)
                     }
                 };
-                let n_rows = if bp.strigar_exp.is_some() { bp.strigar_exp.as_ref().map_or(0, |e| e.len()) } else { bp.sequences.len() };
-                let (x_min, x_max) = if let Some(ref offsets) = bp.x_offsets {
-                    let mut lo = f64::INFINITY;
-                    let mut hi = f64::NEG_INFINITY;
-                    for i in 0..n_rows {
-                        let off = offsets.get(i).copied().flatten().unwrap_or(bp.x_offset)
-                            + bp.x_origin;
-                        lo = lo.min(0.0 - off);
-                        hi = hi.max(row_width(i) - off);
-                    }
-                    (lo, hi)
-                } else {
-                    let off = bp.x_offset + bp.x_origin;
-                    (0.0 - off, max_width - off)
+                let left_len = |i: usize| -> f64 {
+                    bp.left_flanks.as_ref()
+                        .and_then(|f| f.get(i))
+                        .map(|s| s.chars().count() as f64)
+                        .unwrap_or(0.0)
                 };
-                Some(((x_min, x_max), (0.0, rows as f64)))
+                let right_len = |i: usize| -> f64 {
+                    bp.right_flanks.as_ref()
+                        .and_then(|f| f.get(i))
+                        .map(|s| s.chars().count() as f64)
+                        .unwrap_or(0.0)
+                };
+
+                // For right-anchor, all trailing edges align at max(str_width + right_len).
+                // The right-align shift per row is max_right - row_right, which moves shorter
+                // rows rightward. x_lo / x_hi must account for this shift.
+                use crate::plot::BrickAnchor;
+                let right_edges: Vec<f64> = (0..n_rows).map(|i| str_width(i) + right_len(i)).collect();
+                let max_right = right_edges.iter().cloned().fold(0.0_f64, f64::max);
+                let ra_shift = |i: usize| -> f64 {
+                    if bp.anchor == BrickAnchor::Right { max_right - right_edges[i] } else { 0.0 }
+                };
+
+                let row_base_off = |i: usize| -> f64 {
+                    let per_row = if let Some(ref offsets) = bp.x_offsets {
+                        offsets.get(i).copied().flatten().unwrap_or(bp.x_offset)
+                    } else {
+                        bp.x_offset
+                    };
+                    per_row + bp.x_origin
+                };
+
+                // x extent: from leftmost flank to rightmost trailing edge across all rows.
+                let mut lo = f64::INFINITY;
+                let mut hi = f64::NEG_INFINITY;
+                for i in 0..n_rows {
+                    let eff_off = row_base_off(i) - ra_shift(i);
+                    lo = lo.min(-left_len(i) - eff_off);
+                    hi = hi.max(str_width(i) + right_len(i) - eff_off);
+                }
+                if !lo.is_finite() { lo = 0.0; }
+                if !hi.is_finite() { hi = 1.0; }
+
+                Some(((lo, hi), (0.0, rows as f64)))
             }
             Plot::Forest(fp) => {
                 if fp.rows.is_empty() { return None; }
@@ -818,6 +838,16 @@ impl Plot {
             }
             // Rendered in pixel space; dummy bounds satisfy Layout::auto_from_plots.
             Plot::Network(_) => Some(((0.0, 1.0), (0.0, 1.0))),
+            Plot::Streamgraph(sg) => {
+                let geom = sg.compute_geometry()?;
+                let x_min = sg.x.iter().cloned().fold(f64::INFINITY, f64::min);
+                let x_max = sg.x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let y_min = geom.baseline.iter().cloned().fold(f64::INFINITY, f64::min);
+                let y_max = geom.uppers.last()
+                    .map(|u| u.iter().cloned().fold(f64::NEG_INFINITY, f64::max))
+                    .unwrap_or(0.0);
+                Some(((x_min, x_max), (y_min, y_max)))
+            }
         }
     }
 
@@ -888,6 +918,9 @@ impl Plot {
                 qp.groups.len() * 2 + n + band + 20
             }
             Plot::Network(n) => n.nodes.len() * 2 + n.edges.len() * 3 + 20,
+            Plot::Streamgraph(sg) => {
+                sg.series.len() * (sg.x.len() * 3 + 2) + 20
+            }
             _ => 100,
         }
     }
