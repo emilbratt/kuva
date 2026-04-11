@@ -64,7 +64,7 @@ fn microbiome_data() -> (Vec<f64>, Vec<(&'static str, Vec<f64>)>) {
             let w = weeks[i];
             (120.0 + 20.0 * (w * PI / 8.67).sin() + rng() * 10.0).max(5.0)
         }).collect()),
-        ("Fusobacteria", (0..n).map(|i| {
+        ("Fusobacteria", (0..n).map(|_| {
             (80.0 + rng() * 12.0).max(5.0)
         }).collect()),
         ("Verrucomicrobia", (0..n).map(|i| {
@@ -85,6 +85,7 @@ fn build_plot(weeks: Vec<f64>, series: Vec<(&str, Vec<f64>)>) -> StreamgraphPlot
     sg
 }
 
+#[allow(dead_code)]
 fn save(plot: StreamgraphPlot, layout: Layout, name: &str) {
     let plots = vec![Plot::Streamgraph(plot)];
     let svg = SvgBackend.render_scene(&render_multiple(plots, layout));
